@@ -97,14 +97,14 @@ describe('resources-definition', () => {
     const posts = definitions.find((d: { type: string }) => d.type === 'payloadcms:posts')
 
     expect(posts).toBeDefined()
-    expect(posts.configurationType).toBe('multiple')
+    expect(posts.configurationType).toBe('MULTIPLE')
     expect(posts.synchronizable).toBe(true)
 
     // title → asLabel: true (auto-detected)
     expect(posts.configuration.title).toEqual({ label: 'Title', asLabel: true })
 
     // content → type: HTML (inferred from richText)
-    expect(posts.configuration.content.type).toBe('HTML')
+    expect(posts.configuration.content.type).toBe('JSON')
 
     // slug → behavior: slug (from custom.reversia)
     expect(posts.configuration.slug.behavior).toBe('slug')
@@ -132,7 +132,7 @@ describe('resources-definition', () => {
     )
 
     expect(settings).toBeDefined()
-    expect(settings.configurationType).toBe('entity')
+    expect(settings.configurationType).toBe('ENTITY')
     expect(settings.configuration.siteTitle).toBeDefined()
     expect(settings.configuration.siteDescription).toBeDefined()
     expect(settings.configuration.analyticsId).toBeUndefined()

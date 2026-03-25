@@ -64,7 +64,7 @@ export function createResourceEndpoint(
           const value = getNestedValue(doc as unknown as Record<string, unknown>, field.path)
 
           if (value !== undefined && value !== null) {
-            content[field.path] = value
+            content[field.path] = typeof value === 'object' ? JSON.stringify(value) : value
           }
 
           const ct = getContentType(field)
@@ -107,7 +107,7 @@ export function createResourceEndpoint(
         const value = getNestedValue(doc as unknown as Record<string, unknown>, field.path)
 
         if (value !== undefined && value !== null) {
-          content[field.path] = value
+          content[field.path] = typeof value === 'object' ? JSON.stringify(value) : value
         }
 
         const ct = getContentType(field)

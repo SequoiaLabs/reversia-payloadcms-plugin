@@ -54,6 +54,9 @@ export function findLocalizedFields(
           result.push(...findLocalizedFields(tab.fields, parentPath))
         }
       }
+      if (hasSubFields(field)) {
+        result.push(...findLocalizedFields(field.fields, parentPath))
+      }
       continue
     }
 
@@ -100,7 +103,7 @@ export function resolveContentType(field: LocalizedFieldInfo): ReversiaFieldType
   }
 
   if (field.payloadFieldType === 'richText') {
-    return ReversiaFieldType.HTML
+    return ReversiaFieldType.JSON
   }
 
   if (field.payloadFieldType === 'json') {
@@ -140,6 +143,23 @@ function resolveAsLabel(field: LocalizedFieldInfo, hasLabelAlready: boolean): bo
   return false
 }
 
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function buildNestedLabel(field: LocalizedFieldInfo): string {
+  const fieldLabel = field.label || field.name
+  const segments = field.path.split('.')
+
+  if (segments.length <= 1) {
+    return fieldLabel
+  }
+
+  // Build context from parent path segments, skip the last one (the field itself)
+  const parentSegments = segments.slice(0, -1).map(capitalize)
+  return `${parentSegments.join(' > ')} > ${fieldLabel}`
+}
+
 export function buildTranslatableConfiguration(
   localizedFields: LocalizedFieldInfo[],
 ): Record<string, TranslatableFieldConfig> {
@@ -148,7 +168,7 @@ export function buildTranslatableConfiguration(
 
   for (const field of localizedFields) {
     const fieldConfig: TranslatableFieldConfig = {
-      label: field.label || field.name,
+      label: field.isNested ? buildNestedLabel(field) : (field.label || field.name),
     }
 
     const isLabel = resolveAsLabel(field, hasLabelField)

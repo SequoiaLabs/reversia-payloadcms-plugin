@@ -15,7 +15,7 @@ function extractLocalizedContent(
     const value = getNestedValue(doc, field.path)
 
     if (value !== undefined && value !== null) {
-      content[field.path] = value
+      content[field.path] = typeof value === 'object' ? JSON.stringify(value) : value
     }
 
     const ct = getContentType(field)

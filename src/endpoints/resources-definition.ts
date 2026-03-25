@@ -37,7 +37,7 @@ export function createResourcesDefinitionEndpoint(
           group: 'payloadcms',
           version: '1.0.0',
           configuration: buildTranslatableConfiguration(localizedFields),
-          configurationType: 'multiple',
+          configurationType: 'MULTIPLE',
           count: count.totalDocs,
           synchronizable: true,
         })
@@ -59,7 +59,7 @@ export function createResourcesDefinitionEndpoint(
           group: 'payloadcms',
           version: '1.0.0',
           configuration: buildTranslatableConfiguration(localizedFields),
-          configurationType: 'entity',
+          configurationType: 'ENTITY',
           synchronizable: true,
         })
       }

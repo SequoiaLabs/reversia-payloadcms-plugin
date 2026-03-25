@@ -108,7 +108,7 @@ export interface ResourceDefinition {
   group: string
   version: string
   configuration: Record<string, TranslatableFieldConfig>
-  configurationType: 'entity' | 'multiple'
+  configurationType: 'ENTITY' | 'MULTIPLE'
   count?: number
   synchronizable: boolean
 }
