@@ -1,61 +1,51 @@
-import type { Endpoint, CollectionConfig, GlobalConfig, Where } from 'payload'
-import type { ReversiaPluginConfig, ResourceItem, StreamResponse } from '../types.js'
-import { validateApiKey, unauthorizedResponse } from '../utils/auth.js'
-import { findLocalizedFields, getContentType } from '../utils/fields.js'
-import { encodeCursor, decodeCursor } from '../utils/cursor.js'
+import type { CollectionConfig, Endpoint, GlobalConfig, Where } from 'payload';
+import type {
+  LocalizedFieldInfo,
+  ResourceItem,
+  ReversiaPluginConfig,
+  StreamResponse,
+} from '../types.js';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
+import { decodeCursor, encodeCursor } from '../utils/cursor.js';
+import { findLocalizedFields, serializeField } from '../utils/fields.js';
+import { resolveValues } from '../utils/path-resolver.js';
+import { parseLimit, resolveDefaultLocale } from '../utils/payload-helpers.js';
 
 function extractLocalizedContent(
-  doc: Record<string, unknown>,
-  fields: ReturnType<typeof findLocalizedFields>,
+  doc: unknown,
+  fields: LocalizedFieldInfo[],
 ): { content: Record<string, unknown>; contentTypes: Record<string, string> } {
-  const content: Record<string, unknown> = {}
-  const contentTypes: Record<string, string> = {}
+  const content: Record<string, unknown> = {};
+  const contentTypes: Record<string, string> = {};
 
   for (const field of fields) {
-    const value = getNestedValue(doc, field.path)
+    const entries = serializeField(field, doc);
 
-    if (value !== undefined && value !== null) {
-      content[field.path] = typeof value === 'object' ? JSON.stringify(value) : value
-    }
+    for (const entry of entries) {
+      content[entry.indexedPath] = entry.value;
 
-    const ct = getContentType(field)
-
-    if (ct) {
-      contentTypes[field.path] = ct
+      if (entry.contentType) {
+        contentTypes[entry.indexedPath] = entry.contentType;
+      }
     }
   }
 
-  return { content, contentTypes }
+  return { content, contentTypes };
 }
 
-function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.')
-  let current: unknown = obj
+function getLabelValue(doc: unknown, fields: LocalizedFieldInfo[]): string | undefined {
+  const labelField = fields.find(
+    (f) => !f.hasArrayContainer && (f.name === 'title' || f.name === 'name'),
+  );
 
-  for (const part of parts) {
-    if (current === null || current === undefined || typeof current !== 'object') {
-      return undefined
-    }
-
-    current = (current as Record<string, unknown>)[part]
+  if (!labelField) {
+    return undefined;
   }
 
-  return current
-}
+  const resolved = resolveValues(doc, labelField.segments);
+  const value = resolved[0]?.value;
 
-function getLabelValue(
-  doc: Record<string, unknown>,
-  fields: ReturnType<typeof findLocalizedFields>,
-): string | undefined {
-  const labelField = fields.find((f) => f.name === 'title' || f.name === 'name')
-
-  if (labelField) {
-    const value = getNestedValue(doc, labelField.path)
-
-    return typeof value === 'string' ? value : undefined
-  }
-
-  return undefined
+  return typeof value === 'string' ? value : undefined;
 }
 
 export function createResourcesEndpoint(
@@ -68,57 +58,52 @@ export function createResourcesEndpoint(
     method: 'get',
     handler: async (req) => {
       if (!validateApiKey(req, pluginConfig.apiKey)) {
-        return unauthorizedResponse()
+        return unauthorizedResponse();
       }
 
-      const typesParam = req.searchParams.get('types')
-      const cursorParam = req.searchParams.get('cursor')
-      const limitParam = req.searchParams.get('limit')
-      const limit = limitParam ? parseInt(limitParam, 10) : 100
+      const typesParam = req.searchParams.get('types');
+      const cursorParam = req.searchParams.get('cursor');
+      const limit = parseLimit(req.searchParams.get('limit'));
 
-      const cursor = decodeCursor(cursorParam)
-      const requestedTypes = typesParam ? typesParam.split(',') : null
+      const cursor = decodeCursor(cursorParam);
+      const requestedTypes = typesParam ? typesParam.split(',').filter(Boolean) : null;
+      const defaultLocale = resolveDefaultLocale(req);
 
-      const localization = req.payload.config.localization
-      const defaultLocale = localization && typeof localization === 'object' && 'defaultLocale' in localization
-        ? String((localization as { defaultLocale: string }).defaultLocale)
-        : 'en'
-
-      const response: StreamResponse = { content: [], cursor: null }
-      let totalFetched = 0
-      let lastType: string | null = null
-      let lastId: string | null = null
-      let startFromCursor = !cursor
+      const response: StreamResponse = { content: [], cursor: null };
+      let totalFetched = 0;
+      let lastType: string | null = null;
+      let lastId: string | null = null;
+      let startFromCursor = !cursor;
 
       for (const [slug, collection] of collectionsMap) {
-        const resourceType = `payloadcms:${slug}`
+        const resourceType = `payloadcms:${slug}`;
 
         if (requestedTypes && !requestedTypes.includes(resourceType)) {
-          continue
+          continue;
         }
 
         if (!startFromCursor) {
           if (cursor && cursor.type === resourceType) {
-            startFromCursor = true
+            startFromCursor = true;
           } else {
-            continue
+            continue;
           }
         }
 
         if (totalFetched >= limit) {
-          break
+          break;
         }
 
-        const localizedFields = findLocalizedFields(collection.fields)
+        const localizedFields = findLocalizedFields(collection.fields);
 
         if (localizedFields.length === 0) {
-          continue
+          continue;
         }
 
-        const where: Where = {}
+        const where: Where = {};
 
         if (cursor && cursor.type === resourceType && cursor.id) {
-          where.id = { greater_than: cursor.id }
+          where.id = { greater_than: cursor.id };
         }
 
         const docs = await req.payload.find({
@@ -127,46 +112,43 @@ export function createResourcesEndpoint(
           limit: limit - totalFetched,
           sort: 'id',
           where,
-        })
+        });
 
         if (docs.docs.length === 0) {
-          continue
+          continue;
         }
 
-        const items: ResourceItem[] = []
+        const items: ResourceItem[] = [];
 
         for (const doc of docs.docs) {
-          const { content, contentTypes } = extractLocalizedContent(
-            doc as unknown as Record<string, unknown>,
-            localizedFields,
-          )
+          const { content, contentTypes } = extractLocalizedContent(doc, localizedFields);
 
           if (Object.keys(content).length === 0) {
-            continue
+            continue;
           }
 
           items.push({
             id: String(doc.id),
-            label: getLabelValue(doc as unknown as Record<string, unknown>, localizedFields),
+            label: getLabelValue(doc, localizedFields),
             content,
             contentTypes: Object.keys(contentTypes).length > 0 ? contentTypes : undefined,
-          })
+          });
 
-          lastType = resourceType
-          lastId = String(doc.id)
-          totalFetched++
+          lastType = resourceType;
+          lastId = String(doc.id);
+          totalFetched++;
         }
 
         if (items.length > 0) {
-          response.content.push({ type: resourceType, data: items })
+          response.content.push({ type: resourceType, data: items });
         }
       }
 
       if (lastType && lastId && totalFetched >= limit) {
-        response.cursor = encodeCursor(lastType, lastId)
+        response.cursor = encodeCursor(lastType, lastId);
       }
 
-      return Response.json(response)
+      return Response.json(response);
     },
-  }
+  };
 }

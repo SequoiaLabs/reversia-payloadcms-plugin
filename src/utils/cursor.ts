@@ -1,20 +1,39 @@
-import type { Cursor } from '../types.js'
+import type { Cursor } from '../types.js';
 
+/**
+ * Opaque cursor encoding. Uses JSON in base64url so the delimiter concern
+ * (types or ids containing `|`) is eliminated.
+ */
 export function encodeCursor(type: string, id: string): string {
-  return Buffer.from(`${type}|${id}`).toString('base64')
+  return Buffer.from(JSON.stringify({ type, id }), 'utf-8').toString('base64url');
 }
 
 export function decodeCursor(cursorString: string | null | undefined): Cursor | null {
   if (!cursorString) {
-    return null
+    return null;
   }
 
-  const decoded = Buffer.from(cursorString, 'base64').toString('utf-8')
-  const parts = decoded.split('|')
+  try {
+    const decoded = Buffer.from(cursorString, 'base64url').toString('utf-8');
+    const parsed = JSON.parse(decoded) as unknown;
 
-  if (parts.length !== 2) {
-    return null
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof (parsed as Record<string, unknown>).type !== 'string' ||
+      typeof (parsed as Record<string, unknown>).id !== 'string'
+    ) {
+      return null;
+    }
+
+    const { type, id } = parsed as { type: string; id: string };
+
+    if (type.length === 0 || id.length === 0) {
+      return null;
+    }
+
+    return { type, id };
+  } catch {
+    return null;
   }
-
-  return { type: parts[0], id: parts[1] }
 }

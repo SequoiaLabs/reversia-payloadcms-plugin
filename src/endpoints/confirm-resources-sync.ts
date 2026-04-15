@@ -1,48 +1,42 @@
-import type { Endpoint } from 'payload'
-import type { ReversiaPluginConfig } from '../types.js'
-import { validateApiKey, unauthorizedResponse } from '../utils/auth.js'
-import { decodeCursor } from '../utils/cursor.js'
+import type { Endpoint } from 'payload';
+import type { ReversiaPluginConfig } from '../types.js';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
+import { decodeCursor } from '../utils/cursor.js';
 
-export function createConfirmResourcesSyncEndpoint(
-  pluginConfig: ReversiaPluginConfig,
-): Endpoint {
+export function createConfirmResourcesSyncEndpoint(pluginConfig: ReversiaPluginConfig): Endpoint {
   return {
     path: '/reversia/confirm-resources-sync',
     method: 'post',
     handler: async (req) => {
       if (!validateApiKey(req, pluginConfig.apiKey)) {
-        return unauthorizedResponse()
+        return unauthorizedResponse();
       }
 
-      const body = req.data as { cursor?: string } | undefined
-        ?? (req.json ? await req.json() : undefined) as { cursor?: string } | undefined
+      const body =
+        (req.data as { cursor?: string } | undefined) ??
+        ((req.json ? await req.json() : undefined) as { cursor?: string } | undefined);
 
       if (!body?.cursor) {
-        return Response.json({ error: 'cursor is required' }, { status: 400 })
+        return Response.json({ error: 'cursor is required' }, { status: 400 });
       }
 
-      const cursor = decodeCursor(body.cursor)
+      const cursor = decodeCursor(body.cursor);
 
       if (!cursor) {
-        return Response.json({ error: 'Invalid cursor' }, { status: 400 })
+        return Response.json({ error: 'Invalid cursor' }, { status: 400 });
       }
 
-      const pendingDocs = await req.payload.find({
+      // Rows edited after the cursor have a later `updatedAt` and must survive.
+      // Using timestamp comparison is portable across Mongo/Postgres/SQLite —
+      // id reuse on SQLite would silently corrupt the queue.
+      const result = await req.payload.delete({
         collection: 'reversia-sync-pending',
-        where: {
-          id: { less_than_equal: cursor.id },
-        },
-        limit: 10000,
-      })
+        where: { updatedAt: { less_than_equal: cursor.id } },
+      });
 
-      for (const doc of pendingDocs.docs) {
-        await req.payload.delete({
-          collection: 'reversia-sync-pending',
-          id: doc.id,
-        })
-      }
+      const deleted = Array.isArray(result.docs) ? result.docs.length : 0;
 
-      return Response.json(true)
+      return Response.json({ success: true, deleted });
     },
-  }
+  };
 }

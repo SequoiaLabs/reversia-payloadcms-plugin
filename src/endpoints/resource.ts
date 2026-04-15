@@ -1,21 +1,41 @@
-import type { Endpoint, CollectionConfig, GlobalConfig } from 'payload'
-import type { ReversiaPluginConfig } from '../types.js'
-import { validateApiKey, unauthorizedResponse } from '../utils/auth.js'
-import { findLocalizedFields, getContentType } from '../utils/fields.js'
+import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
+import type { LocalizedFieldInfo, ReversiaPluginConfig } from '../types.js';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
+import { findLocalizedFields, serializeField } from '../utils/fields.js';
+import { resolveValues } from '../utils/path-resolver.js';
+import { resolveDefaultLocale } from '../utils/payload-helpers.js';
 
-function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.')
-  let current: unknown = obj
+function extract(doc: unknown, fields: LocalizedFieldInfo[]) {
+  const content: Record<string, unknown> = {};
+  const contentTypes: Record<string, string> = {};
 
-  for (const part of parts) {
-    if (current === null || current === undefined || typeof current !== 'object') {
-      return undefined
+  for (const field of fields) {
+    const entries = serializeField(field, doc);
+
+    for (const entry of entries) {
+      content[entry.indexedPath] = entry.value;
+
+      if (entry.contentType) {
+        contentTypes[entry.indexedPath] = entry.contentType;
+      }
     }
-
-    current = (current as Record<string, unknown>)[part]
   }
 
-  return current
+  return { content, contentTypes };
+}
+
+function getLabelValue(doc: unknown, fields: LocalizedFieldInfo[]): string | undefined {
+  const labelField = fields.find(
+    (f) => !f.hasArrayContainer && (f.name === 'title' || f.name === 'name'),
+  );
+
+  if (!labelField) {
+    return undefined;
+  }
+
+  const value = resolveValues(doc, labelField.segments)[0]?.value;
+
+  return typeof value === 'string' ? value : undefined;
 }
 
 export function createResourceEndpoint(
@@ -28,106 +48,71 @@ export function createResourceEndpoint(
     method: 'get',
     handler: async (req) => {
       if (!validateApiKey(req, pluginConfig.apiKey)) {
-        return unauthorizedResponse()
+        return unauthorizedResponse();
       }
 
-      const resourceType = req.searchParams.get('resourceType')
-      const resourceId = req.searchParams.get('resourceId')
+      const resourceType = req.searchParams.get('resourceType');
+      const resourceId = req.searchParams.get('resourceId');
 
-      if (!resourceType) {
-        return Response.json({ error: 'resourceType is required' }, { status: 400 })
+      if (!resourceType || resourceType.length === 0) {
+        return Response.json({ error: 'resourceType is required' }, { status: 400 });
       }
 
-      const localization = req.payload.config.localization
-      const defaultLocale = localization && typeof localization === 'object' && 'defaultLocale' in localization
-        ? String((localization as { defaultLocale: string }).defaultLocale)
-        : 'en'
+      const defaultLocale = resolveDefaultLocale(req);
 
       if (resourceType.startsWith('payloadcms:global:')) {
-        const globalSlug = resourceType.replace('payloadcms:global:', '')
-        const globalConfig = globalsMap.get(globalSlug)
+        const globalSlug = resourceType.slice('payloadcms:global:'.length);
+        const globalConfig = globalsMap.get(globalSlug);
 
         if (!globalConfig) {
-          return Response.json({ error: `Global ${globalSlug} not found` }, { status: 404 })
+          return Response.json({ error: `Global ${globalSlug} not found` }, { status: 404 });
         }
 
-        const localizedFields = findLocalizedFields(globalConfig.fields)
-        const doc = await req.payload.findGlobal({
-          slug: globalSlug,
-          locale: defaultLocale,
-        })
-
-        const content: Record<string, unknown> = {}
-        const contentTypes: Record<string, string> = {}
-
-        for (const field of localizedFields) {
-          const value = getNestedValue(doc as unknown as Record<string, unknown>, field.path)
-
-          if (value !== undefined && value !== null) {
-            content[field.path] = typeof value === 'object' ? JSON.stringify(value) : value
-          }
-
-          const ct = getContentType(field)
-
-          if (ct) {
-            contentTypes[field.path] = ct
-          }
-        }
+        const localizedFields = findLocalizedFields(globalConfig.fields);
+        const doc = await req.payload.findGlobal({ slug: globalSlug, locale: defaultLocale });
+        const { content, contentTypes } = extract(doc, localizedFields);
 
         return Response.json({
           id: globalSlug,
           content,
           contentTypes: Object.keys(contentTypes).length > 0 ? contentTypes : undefined,
-        })
+        });
       }
 
-      const slug = resourceType.replace('payloadcms:', '')
-      const collection = collectionsMap.get(slug)
+      if (!resourceType.startsWith('payloadcms:')) {
+        return Response.json({ error: 'Unknown resourceType' }, { status: 400 });
+      }
+
+      const slug = resourceType.slice('payloadcms:'.length);
+      const collection = collectionsMap.get(slug);
 
       if (!collection) {
-        return Response.json({ error: `Collection ${slug} not found` }, { status: 404 })
+        return Response.json({ error: `Collection ${slug} not found` }, { status: 404 });
       }
 
-      if (!resourceId) {
-        return Response.json({ error: 'resourceId is required for collection resources' }, { status: 400 })
+      if (!resourceId || resourceId.length === 0) {
+        return Response.json(
+          { error: 'resourceId is required for collection resources' },
+          { status: 400 },
+        );
       }
 
-      const localizedFields = findLocalizedFields(collection.fields)
+      const localizedFields = findLocalizedFields(collection.fields);
 
       const doc = await req.payload.findByID({
         collection: slug,
         id: resourceId,
         locale: defaultLocale,
-      })
+      });
 
-      const content: Record<string, unknown> = {}
-      const contentTypes: Record<string, string> = {}
-
-      for (const field of localizedFields) {
-        const value = getNestedValue(doc as unknown as Record<string, unknown>, field.path)
-
-        if (value !== undefined && value !== null) {
-          content[field.path] = typeof value === 'object' ? JSON.stringify(value) : value
-        }
-
-        const ct = getContentType(field)
-
-        if (ct) {
-          contentTypes[field.path] = ct
-        }
-      }
-
-      const labelField = localizedFields.find((f) => f.name === 'title' || f.name === 'name')
-      const label = labelField
-        ? getNestedValue(doc as unknown as Record<string, unknown>, labelField.path)
-        : undefined
+      const { content, contentTypes } = extract(doc, localizedFields);
 
       return Response.json({
         id: String(doc.id),
-        label: typeof label === 'string' ? label : undefined,
+        label: getLabelValue(doc, localizedFields),
         content,
         contentTypes: Object.keys(contentTypes).length > 0 ? contentTypes : undefined,
-      })
+      });
     },
-  }
+  };
 }

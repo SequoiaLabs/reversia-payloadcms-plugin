@@ -2,13 +2,14 @@
 
 A [PayloadCMS](https://payloadcms.com/) plugin that integrates with [Reversia](https://reversia.tech), a translation SaaS platform, enabling seamless content localization and synchronization across multiple languages.
 
-## How It Works
+## How it works
 
 1. The plugin scans your PayloadCMS config and detects all localized fields across collections and globals.
 2. When content changes, an `afterChange` hook records it in a hidden sync queue.
-3. Reversia polls the plugin's API endpoints to fetch translatable content.
-4. Once translated, Reversia pushes translations back via the insertion endpoint.
-5. A confirmation endpoint clears processed items from the sync queue.
+3. Reversia polls the plugin's HTTP endpoints to fetch translatable content.
+4. For `richText` / `json` fields, only the leaf strings you mark as translatable are shipped — the structure is kept local.
+5. Once translated, Reversia pushes translations back. The plugin rehydrates the original tree and saves it on the target locale.
+6. A confirmation endpoint clears processed items from the sync queue.
 
 ## Installation
 
@@ -18,95 +19,56 @@ npm install payload-plugin-reversia
 bun add payload-plugin-reversia
 ```
 
-## Configuration
+## Quick start
 
-Add the plugin to your PayloadCMS config:
-
-```typescript
-import { buildConfig } from 'payload'
-import { reversiaPlugin } from 'payload-plugin-reversia'
+```ts
+import { buildConfig } from 'payload';
+import { reversiaPlugin } from 'payload-plugin-reversia';
 
 export default buildConfig({
-  // ... your config
   plugins: [
     reversiaPlugin({
       apiKey: process.env.REVERSIA_API_KEY!,
-      enabledCollections: ['posts', 'pages'], // optional: whitelist specific collections
-      enabledGlobals: ['site-settings'],       // optional: whitelist specific globals
+      enabledCollections: ['posts', 'pages'],
+      enabledGlobals: ['site-settings'],
     }),
   ],
-})
+});
 ```
 
-### Options
+Then on a localized field:
 
-| Option                | Type               | Required | Description                                      |
-|-----------------------|--------------------|----------|--------------------------------------------------|
-| `apiKey`              | `string`           | Yes      | API key for authenticating Reversia requests      |
-| `enabledCollections`  | `CollectionSlug[]` | No       | Whitelist of collections to enable for translation |
-| `enabledGlobals`      | `string[]`         | No       | Whitelist of globals to enable for translation     |
-| `disabled`            | `boolean`          | No       | Disable the plugin entirely (default: `false`)     |
+```ts
+{
+  name: 'body',
+  type: 'richText',
+  localized: true,
+  // Default translatableKeys: ['text', 'url', 'alt']
+}
 
-## Field Type Annotations
-
-You can customize how Reversia interprets your fields using `custom.reversia` metadata:
-
-```typescript
 {
   name: 'slug',
   type: 'text',
   localized: true,
   custom: {
-    reversia: {
-      type: 'TEXT',       // TEXT | HTML | JSON | LINK | MEDIUM
-      behavior: 'SLUG',   // optional: SLUG
-      asLabel: true,       // use this field as the resource label
-      selected: true,      // pre-select for translation
-    },
+    reversia: { behavior: 'slug' },
   },
 }
 ```
 
-**Automatic type inference:**
-- `richText` fields -> `HTML`
-- `json` fields -> `JSON`
-- All others -> `TEXT`
+## Documentation
 
-## API Endpoints
-
-All endpoints are mounted under `/api/reversia/` and require authentication via `X-API-Key` header or `apiKey` query parameter.
-
-| Method | Endpoint                    | Description                                  |
-|--------|-----------------------------|----------------------------------------------|
-| GET    | `/settings`                 | Plugin config and available languages         |
-| GET    | `/resources-definition`     | Schema definitions for translatable resources |
-| GET    | `/resources`                | Paginated stream of translatable content      |
-| GET    | `/resource`                 | Single resource by type and ID                |
-| GET    | `/resources-sync`           | Pending resources awaiting translation sync   |
-| PUT    | `/resources-insert`         | Insert translated content back into Payload   |
-| POST   | `/confirm-resources-sync`   | Confirm sync completion and clear queue       |
-
-## Development
-
-```bash
-# Install dependencies
-bun install
-
-# Build
-bun run build
-
-# Watch mode
-bun run dev
-
-# Run tests
-bun test
-```
+- **[Configuration](./docs/configuration.md)** — plugin options, auth, what gets exposed.
+- **[Field annotations](./docs/field-annotations.md)** — the `custom.reversia` metadata reference.
+- **[Rich text & JSON fields](./docs/rich-text.md)** — `translatableKeys`, path patterns, and the `extract`/`apply` escape hatch.
+- **[API reference](./docs/api-reference.md)** — HTTP endpoints consumed by the Reversia SaaS.
+- **[Contributing](./CONTRIBUTING.md)** — local dev, linting, testing.
 
 ## Requirements
 
 - PayloadCMS v3.0.0+
-- Node.js or Bun runtime
-- At least one localized field in your collections/globals
+- Node.js 20+ or Bun
+- At least one `localized: true` field on a collection or global
 
 ## License
 

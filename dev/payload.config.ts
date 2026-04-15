@@ -1,9 +1,9 @@
-import { buildConfig } from 'payload'
-import { sqliteAdapter } from '@payloadcms/db-sqlite'
-import { lexicalEditor } from '@payloadcms/richtext-lexical'
-import { reversiaPlugin, ReversiaFieldType, ReversiaFieldBehavior } from '../src/index.js'
+import { sqliteAdapter } from '@payloadcms/db-sqlite';
+import { lexicalEditor } from '@payloadcms/richtext-lexical';
+import { buildConfig } from 'payload';
+import { ReversiaFieldBehavior, ReversiaFieldType, reversiaPlugin } from '../src/index.js';
 
-export const TEST_API_KEY = 'test-reversia-api-key'
+export const TEST_API_KEY = 'test-reversia-api-key';
 
 export default buildConfig({
   secret: 'test-secret-for-payload-reversia-plugin',
@@ -78,6 +78,17 @@ export default buildConfig({
           name: 'internalNotes',
           type: 'text',
           // NOT localized — should be ignored by plugin
+        },
+        {
+          name: 'seo',
+          type: 'group',
+          fields: [
+            {
+              name: 'metaTitle',
+              type: 'text',
+              localized: true,
+            },
+          ],
         },
       ],
     },
@@ -159,4 +170,4 @@ export default buildConfig({
   typescript: {
     autoGenerate: false,
   },
-})
+});

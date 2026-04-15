@@ -1,9 +1,16 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionConfig } from 'payload';
 
 export const reversiaSyncPendingCollection: CollectionConfig = {
   slug: 'reversia-sync-pending',
   admin: {
     hidden: true,
+  },
+  access: {
+    // Hidden, internal queue — no public read/write access by default.
+    read: () => false,
+    create: () => false,
+    update: () => false,
+    delete: () => false,
   },
   fields: [
     {
@@ -19,4 +26,4 @@ export const reversiaSyncPendingCollection: CollectionConfig = {
       index: true,
     },
   ],
-}
+};

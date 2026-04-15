@@ -1,92 +1,128 @@
-import type { Config, CollectionConfig, GlobalConfig } from 'payload'
-import type { ReversiaPluginConfig } from './types.js'
-import { reversiaSyncPendingCollection } from './collections/sync-pending.js'
-import { createAfterChangeHook } from './hooks/after-change.js'
-import { findLocalizedFields } from './utils/fields.js'
-import { createResourcesDefinitionEndpoint } from './endpoints/resources-definition.js'
-import { createResourcesEndpoint } from './endpoints/resources.js'
-import { createResourcesSyncEndpoint } from './endpoints/resources-sync.js'
-import { createResourceEndpoint } from './endpoints/resource.js'
-import { createResourcesInsertEndpoint } from './endpoints/resources-insert.js'
-import { createConfirmResourcesSyncEndpoint } from './endpoints/confirm-resources-sync.js'
-import { createSettingsEndpoint } from './endpoints/settings.js'
+import type { CollectionConfig, Config, GlobalConfig } from 'payload';
+import { reversiaSyncPendingCollection } from './collections/sync-pending.js';
+import { createConfirmResourcesSyncEndpoint } from './endpoints/confirm-resources-sync.js';
+import { createResourceEndpoint } from './endpoints/resource.js';
+import { createResourcesEndpoint } from './endpoints/resources.js';
+import { createResourcesDefinitionEndpoint } from './endpoints/resources-definition.js';
+import { createResourcesInsertEndpoint } from './endpoints/resources-insert.js';
+import { createResourcesSyncEndpoint } from './endpoints/resources-sync.js';
+import { createSettingsEndpoint } from './endpoints/settings.js';
+import { createAfterChangeHook } from './hooks/after-change.js';
+import type { ReversiaPluginConfig } from './types.js';
+import { findLocalizedFields } from './utils/fields.js';
 
-export type { ReversiaPluginConfig, ReversiaFieldCustom } from './types.js'
-export { ReversiaFieldType, ReversiaFieldBehavior } from './types.js'
+export type {
+  ConfirmResourcesSyncResponse,
+  InsertionRequest,
+  InsertionResponse,
+  ResourceDefinition,
+  ResourceItem,
+  ResourceResponse,
+  ReversiaErrorResponse,
+  ReversiaFieldCustom,
+  ReversiaPluginConfig,
+  SettingsResponse,
+  StreamResponse,
+  TranslatableFieldConfig,
+} from './types.js';
+export { ReversiaFieldBehavior, ReversiaFieldType } from './types.js';
 
-export const reversiaPlugin = (pluginConfig: ReversiaPluginConfig) => (config: Config): Config => {
-  if (pluginConfig.disabled) {
-    return config
-  }
+const APPLIED_MARKER = Symbol.for('payload-plugin-reversia.applied');
 
-  const collectionsMap = new Map<string, CollectionConfig>()
-  const globalsMap = new Map<string, GlobalConfig>()
+type MaybeMarkedConfig = Config & { [APPLIED_MARKER]?: boolean };
 
-  const collections = [...(config.collections ?? [])]
-
-  for (const collection of collections) {
-    if (pluginConfig.enabledCollections && !pluginConfig.enabledCollections.includes(collection.slug as never)) {
-      continue
+export const reversiaPlugin =
+  (pluginConfig: ReversiaPluginConfig) =>
+  (config: Config): Config => {
+    if (pluginConfig.disabled) {
+      return config;
     }
 
-    const localizedFields = findLocalizedFields(collection.fields)
-
-    if (localizedFields.length === 0) {
-      continue
+    if (typeof pluginConfig.apiKey !== 'string' || pluginConfig.apiKey.length === 0) {
+      throw new Error(
+        '[reversia] apiKey is required. Set `ReversiaPluginConfig.apiKey` to a non-empty string.',
+      );
     }
 
-    collectionsMap.set(collection.slug, collection)
-  }
+    const marked = config as MaybeMarkedConfig;
 
-  const globals = [...(config.globals ?? [])]
-
-  for (const global of globals) {
-    if (pluginConfig.enabledGlobals && !pluginConfig.enabledGlobals.includes(global.slug)) {
-      continue
+    if (marked[APPLIED_MARKER]) {
+      return config;
     }
 
-    const localizedFields = findLocalizedFields(global.fields)
+    marked[APPLIED_MARKER] = true;
 
-    if (localizedFields.length === 0) {
-      continue
+    const enabledCollectionSlugs = pluginConfig.enabledCollections
+      ? new Set(pluginConfig.enabledCollections.map((s) => String(s)))
+      : null;
+    const enabledGlobalSlugs = pluginConfig.enabledGlobals
+      ? new Set(pluginConfig.enabledGlobals)
+      : null;
+
+    const collectionsMap = new Map<string, CollectionConfig>();
+    const globalsMap = new Map<string, GlobalConfig>();
+
+    const collections = [...(config.collections ?? [])];
+
+    for (const collection of collections) {
+      if (enabledCollectionSlugs && !enabledCollectionSlugs.has(collection.slug)) {
+        continue;
+      }
+
+      if (findLocalizedFields(collection.fields).length === 0) {
+        continue;
+      }
+
+      collectionsMap.set(collection.slug, collection);
     }
 
-    globalsMap.set(global.slug, global)
-  }
+    const globals = [...(config.globals ?? [])];
 
-  config.collections = collections.map((collection) => {
-    if (!collectionsMap.has(collection.slug)) {
-      return collection
+    for (const global of globals) {
+      if (enabledGlobalSlugs && !enabledGlobalSlugs.has(global.slug)) {
+        continue;
+      }
+
+      if (findLocalizedFields(global.fields).length === 0) {
+        continue;
+      }
+
+      globalsMap.set(global.slug, global);
     }
 
-    const resourceType = `payloadcms:${collection.slug}`
+    config.collections = collections.map((collection) => {
+      if (!collectionsMap.has(collection.slug)) {
+        return collection;
+      }
 
-    return {
-      ...collection,
-      hooks: {
-        ...(collection.hooks ?? {}),
-        afterChange: [
-          ...(collection.hooks?.afterChange ?? []),
-          createAfterChangeHook(resourceType),
-        ],
-      },
-    }
-  })
+      const resourceType = `payloadcms:${collection.slug}`;
 
-  config.collections = [...(config.collections ?? []), reversiaSyncPendingCollection]
+      return {
+        ...collection,
+        hooks: {
+          ...(collection.hooks ?? {}),
+          afterChange: [
+            ...(collection.hooks?.afterChange ?? []),
+            createAfterChangeHook(resourceType),
+          ],
+        },
+      };
+    });
 
-  config.endpoints = [
-    ...(config.endpoints ?? []),
-    createResourcesDefinitionEndpoint(pluginConfig, collectionsMap, globalsMap),
-    createResourcesEndpoint(pluginConfig, collectionsMap, globalsMap),
-    createResourcesSyncEndpoint(pluginConfig, collectionsMap),
-    createResourceEndpoint(pluginConfig, collectionsMap, globalsMap),
-    createResourcesInsertEndpoint(pluginConfig, collectionsMap, globalsMap),
-    createConfirmResourcesSyncEndpoint(pluginConfig),
-    createSettingsEndpoint(pluginConfig),
-  ]
+    config.collections = [...(config.collections ?? []), reversiaSyncPendingCollection];
 
-  return config
-}
+    config.endpoints = [
+      ...(config.endpoints ?? []),
+      createResourcesDefinitionEndpoint(pluginConfig, collectionsMap, globalsMap),
+      createResourcesEndpoint(pluginConfig, collectionsMap, globalsMap),
+      createResourcesSyncEndpoint(pluginConfig, collectionsMap),
+      createResourceEndpoint(pluginConfig, collectionsMap, globalsMap),
+      createResourcesInsertEndpoint(pluginConfig, collectionsMap, globalsMap),
+      createConfirmResourcesSyncEndpoint(pluginConfig),
+      createSettingsEndpoint(pluginConfig),
+    ];
 
-export default reversiaPlugin
+    return config;
+  };
+
+export default reversiaPlugin;

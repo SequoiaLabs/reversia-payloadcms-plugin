@@ -11,22 +11,22 @@
  */
 export function resolveStaticLabel(label: unknown, fallback: string): string {
   if (typeof label === 'string') {
-    return label
+    return label;
   }
 
   if (label && typeof label === 'object' && !Array.isArray(label)) {
-    const record = label as Record<string, string>
+    const record = label as Record<string, string>;
 
     if (typeof record.en === 'string') {
-      return record.en
+      return record.en;
     }
 
-    const firstKey = Object.keys(record)[0]
+    const firstKey = Object.keys(record)[0];
 
     if (firstKey && typeof record[firstKey] === 'string') {
-      return record[firstKey]
+      return record[firstKey];
     }
   }
 
-  return fallback
+  return fallback;
 }

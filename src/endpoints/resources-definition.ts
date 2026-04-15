@@ -1,8 +1,8 @@
-import type { Endpoint, CollectionConfig, GlobalConfig } from 'payload'
-import type { ReversiaPluginConfig, ResourceDefinition } from '../types.js'
-import { validateApiKey, unauthorizedResponse } from '../utils/auth.js'
-import { findLocalizedFields, buildTranslatableConfiguration } from '../utils/fields.js'
-import { resolveStaticLabel } from '../utils/labels.js'
+import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
+import type { ResourceDefinition, ReversiaPluginConfig } from '../types.js';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
+import { buildTranslatableConfiguration, findLocalizedFields } from '../utils/fields.js';
+import { resolveStaticLabel } from '../utils/labels.js';
 
 export function createResourcesDefinitionEndpoint(
   pluginConfig: ReversiaPluginConfig,
@@ -14,19 +14,19 @@ export function createResourcesDefinitionEndpoint(
     method: 'get',
     handler: async (req) => {
       if (!validateApiKey(req, pluginConfig.apiKey)) {
-        return unauthorizedResponse()
+        return unauthorizedResponse();
       }
 
-      const definitions: ResourceDefinition[] = []
+      const definitions: ResourceDefinition[] = [];
 
       for (const [slug, collection] of collectionsMap) {
-        const localizedFields = findLocalizedFields(collection.fields)
+        const localizedFields = findLocalizedFields(collection.fields);
 
         if (localizedFields.length === 0) {
-          continue
+          continue;
         }
 
-        const count = await req.payload.count({ collection: slug })
+        const count = await req.payload.count({ collection: slug });
 
         definitions.push({
           type: `payloadcms:${slug}`,
@@ -40,14 +40,14 @@ export function createResourcesDefinitionEndpoint(
           configurationType: 'MULTIPLE',
           count: count.totalDocs,
           synchronizable: true,
-        })
+        });
       }
 
       for (const [slug, global] of globalsMap) {
-        const localizedFields = findLocalizedFields(global.fields)
+        const localizedFields = findLocalizedFields(global.fields);
 
         if (localizedFields.length === 0) {
-          continue
+          continue;
         }
 
         definitions.push({
@@ -61,10 +61,10 @@ export function createResourcesDefinitionEndpoint(
           configuration: buildTranslatableConfiguration(localizedFields),
           configurationType: 'ENTITY',
           synchronizable: true,
-        })
+        });
       }
 
-      return Response.json(definitions)
+      return Response.json(definitions);
     },
-  }
+  };
 }
