@@ -1,12 +1,11 @@
 import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
 import type { InsertionResponse, LocalizedFieldInfo, ReversiaPluginConfig } from '../types.js';
 import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
-import { deserializeFieldValue, findLocalizedFields } from '../utils/fields.js';
 import {
-  getAtIndexedPath,
-  indexedPathMatchesSegments,
-  setAtIndexedPath,
-} from '../utils/path-resolver.js';
+  deflatePopulatedRelationships,
+  deserializeFieldValue,
+  findLocalizedFields,
+} from '../utils/fields.js';
 
 interface InsertionRequestItem {
   type: string;
@@ -14,24 +13,6 @@ interface InsertionRequestItem {
   sourceLocale: string;
   targetLocale: string;
   data: Record<string, unknown>;
-}
-
-interface ResolvedDataEntry {
-  indexedPath: string;
-  field: LocalizedFieldInfo;
-  translated: unknown;
-}
-
-function fieldNeedsSource(field: LocalizedFieldInfo): boolean {
-  if (field.reversia?.apply) {
-    return true;
-  }
-
-  if (field.reversia?.translatableKeys && field.reversia.translatableKeys.length > 0) {
-    return true;
-  }
-
-  return field.payloadFieldType === 'richText';
 }
 
 function stringifyDiffValue(value: unknown): string {
@@ -50,69 +31,82 @@ function stringifyDiffValue(value: unknown): string {
   return String(value);
 }
 
-function matchField(
-  fields: readonly LocalizedFieldInfo[],
-  indexedPath: string,
-): LocalizedFieldInfo | undefined {
-  for (const field of fields) {
-    if (indexedPathMatchesSegments(indexedPath, field.segments)) {
-      return field;
-    }
+function indexFieldsByName(fields: readonly LocalizedFieldInfo[]): Map<string, LocalizedFieldInfo> {
+  const map = new Map<string, LocalizedFieldInfo>();
+  for (const f of fields) {
+    map.set(f.name, f);
   }
-
-  return undefined;
+  return map;
 }
 
-function resolveEntries(
-  fields: readonly LocalizedFieldInfo[],
-  data: Record<string, unknown>,
-): ResolvedDataEntry[] {
-  const entries: ResolvedDataEntry[] = [];
+interface ApplyParams {
+  allowedFields: LocalizedFieldInfo[];
+  data: Record<string, unknown>;
+  sourceDoc: unknown;
+  previousDoc: unknown;
+}
 
-  for (const [key, value] of Object.entries(data)) {
-    const field = matchField(fields, key);
+interface ApplyResult {
+  updateData: Record<string, unknown>;
+  diff: Record<string, string>;
+  acceptedFields: string[];
+}
+
+function applyTranslations({
+  allowedFields,
+  data,
+  sourceDoc,
+  previousDoc,
+}: ApplyParams): ApplyResult {
+  const fieldByName = indexFieldsByName(allowedFields);
+
+  // Deflate the source doc ONCE before anything reads from it. Payload's
+  // Lexical `afterRead` populates relationship/upload fields inside block
+  // nodes even at `depth: 0`, and the internal `payloadDataLoader` cache can
+  // serve a populated version from a prior higher-depth fetch. Deflating here
+  // guarantees `deserializeFieldValue` sees plain string IDs everywhere — not
+  // populated `{ id, filename, url }` objects that Payload's update validator
+  // rejects.
+  const cleanSource = sourceDoc ? deflatePopulatedRelationships(sourceDoc) : null;
+
+  // Build updateData ONLY from fields Reversia actually sent translations for.
+  // Never pre-clone containers that aren't being translated — writing them
+  // back would overwrite other locales' existing values with source-language
+  // content, because Payload's update replaces the entire localized slot.
+  const updateData: Record<string, unknown> = {};
+  const diff: Record<string, string> = {};
+  const acceptedFields: string[] = [];
+  const previous = (previousDoc as Record<string, unknown> | null | undefined) ?? null;
+  const source = (cleanSource as Record<string, unknown> | null | undefined) ?? null;
+
+  for (const [fieldName, translatedValue] of Object.entries(data)) {
+    const field = fieldByName.get(fieldName);
 
     if (!field) {
       continue;
     }
 
-    entries.push({ indexedPath: key, field, translated: value });
-  }
+    const sourceValue = source ? source[fieldName] : undefined;
+    const finalValue = deserializeFieldValue(field, sourceValue, translatedValue);
 
-  return entries;
-}
+    updateData[fieldName] = finalValue;
+    acceptedFields.push(fieldName);
 
-async function applyInsertion(params: {
-  entries: ResolvedDataEntry[];
-  sourceDoc: unknown;
-  previousDoc: unknown;
-}): Promise<{ updateData: Record<string, unknown>; diff: Record<string, string> }> {
-  const { entries, sourceDoc, previousDoc } = params;
-  const updateData: Record<string, unknown> = {};
-  const diff: Record<string, string> = {};
+    const prevValue = previous ? previous[fieldName] : undefined;
 
-  for (const { indexedPath, field, translated } of entries) {
-    const sourceValue = getAtIndexedPath(sourceDoc, indexedPath);
-    const finalValue = fieldNeedsSource(field)
-      ? deserializeFieldValue(field, sourceValue, translated)
-      : translated;
-
-    setAtIndexedPath(updateData, sourceDoc, indexedPath, finalValue);
-
-    const prevValue = getAtIndexedPath(previousDoc, indexedPath);
-
-    if (prevValue === null || prevValue === undefined) {
+    if (prevValue === undefined || prevValue === null) {
       continue;
     }
 
     const prevString = stringifyDiffValue(prevValue);
+    const newString = stringifyDiffValue(finalValue);
 
-    if (prevString !== stringifyDiffValue(translated)) {
-      diff[indexedPath] = prevString;
+    if (prevString !== newString) {
+      diff[fieldName] = prevString;
     }
   }
 
-  return { updateData, diff };
+  return { updateData, diff, acceptedFields };
 }
 
 export function createResourcesInsertEndpoint(
@@ -141,6 +135,11 @@ export function createResourcesInsertEndpoint(
       for (let index = 0; index < body.length; index++) {
         const item = body[index];
 
+        if (!item || typeof item !== 'object') {
+          response.errors.push(`Item ${index}: must be an object`);
+          continue;
+        }
+
         if (!item.type) {
           response.errors.push(`Item ${index}: type is required`);
           continue;
@@ -167,23 +166,29 @@ export function createResourcesInsertEndpoint(
             }
 
             const allowedFields = findLocalizedFields(globalConfig.fields);
-            const entries = resolveEntries(allowedFields, item.data);
-            const needsSource = entries.some((e) => fieldNeedsSource(e.field));
 
-            const sourceDoc = needsSource
-              ? await req.payload.findGlobal({ slug: globalSlug, locale: item.sourceLocale })
-              : null;
+            // depth: 0 is critical — without it, Payload populates relationship
+            // and upload fields as full objects instead of raw IDs. Our clone
+            // would then write those objects back, which Payload's validator
+            // rejects with "invalid relationships: [object Object]".
+            const [sourceDoc, previousDoc] = await Promise.all([
+              req.payload.findGlobal({ slug: globalSlug, locale: item.sourceLocale, depth: 0 }),
+              req.payload.findGlobal({ slug: globalSlug, locale: item.targetLocale, depth: 0 }),
+            ]);
 
-            const previousDoc = await req.payload.findGlobal({
-              slug: globalSlug,
-              locale: item.targetLocale,
-            });
-
-            const { updateData, diff } = await applyInsertion({
-              entries,
+            const { updateData, diff, acceptedFields } = applyTranslations({
+              allowedFields,
+              data: item.data,
               sourceDoc,
               previousDoc,
             });
+
+            if (acceptedFields.length === 0) {
+              response.errors.push(
+                `Item ${index}: no recognised fields in data (keys: ${Object.keys(item.data).join(', ')})`,
+              );
+              continue;
+            }
 
             await req.payload.updateGlobal({
               slug: globalSlug,
@@ -197,7 +202,7 @@ export function createResourcesInsertEndpoint(
           }
 
           if (!item.type.startsWith('payloadcms:')) {
-            response.errors.push(`Item ${index}: unknown resourceType`);
+            response.errors.push(`Item ${index}: unknown resourceType "${item.type}"`);
             continue;
           }
 
@@ -215,28 +220,35 @@ export function createResourcesInsertEndpoint(
           }
 
           const allowedFields = findLocalizedFields(collection.fields);
-          const entries = resolveEntries(allowedFields, item.data);
-          const needsSource = entries.some((e) => fieldNeedsSource(e.field));
 
-          const sourceDoc = needsSource
-            ? await req.payload.findByID({
-                collection: slug,
-                id: item.id,
-                locale: item.sourceLocale,
-              })
-            : null;
+          const [sourceDoc, previousDoc] = await Promise.all([
+            req.payload.findByID({
+              collection: slug,
+              id: item.id,
+              locale: item.sourceLocale,
+              depth: 0,
+            }),
+            req.payload.findByID({
+              collection: slug,
+              id: item.id,
+              locale: item.targetLocale,
+              depth: 0,
+            }),
+          ]);
 
-          const previousDoc = await req.payload.findByID({
-            collection: slug,
-            id: item.id,
-            locale: item.targetLocale,
-          });
-
-          const { updateData, diff } = await applyInsertion({
-            entries,
+          const { updateData, diff, acceptedFields } = applyTranslations({
+            allowedFields,
+            data: item.data,
             sourceDoc,
             previousDoc,
           });
+
+          if (acceptedFields.length === 0) {
+            response.errors.push(
+              `Item ${index}: no recognised fields in data (keys: ${Object.keys(item.data).join(', ')})`,
+            );
+            continue;
+          }
 
           await req.payload.update({
             collection: slug,
@@ -248,12 +260,89 @@ export function createResourcesInsertEndpoint(
 
           response[index] = { index, type: item.type, id: item.id, diff };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          response.errors.push(`Item ${index}: ${message}`);
+          recordInsertionFailure(req, response, error, index, item);
         }
       }
 
       return Response.json(response);
     },
   };
+}
+
+/**
+ * Payload's ValidationError stashes structured field-level diagnostics on
+ * `error.data.errors` (`[{ field, message }]`). Pull them out so the Reversia
+ * warn log carries enough context to pinpoint which field blew up on which
+ * item without needing to tail the Payload server logs.
+ */
+function extractPayloadFieldErrors(
+  error: unknown,
+): Array<{ field: string; message: string }> | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+
+  const data = (error as { data?: unknown }).data;
+
+  if (!data || typeof data !== 'object') {
+    return undefined;
+  }
+
+  const errors = (data as { errors?: unknown }).errors;
+
+  if (!Array.isArray(errors)) {
+    return undefined;
+  }
+
+  const out: Array<{ field: string; message: string }> = [];
+
+  for (const entry of errors) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+
+    const field = (entry as { field?: unknown; path?: unknown }).field;
+    const path = (entry as { path?: unknown }).path;
+    const message = (entry as { message?: unknown }).message;
+
+    out.push({
+      field: typeof field === 'string' ? field : typeof path === 'string' ? path : '(unknown)',
+      message: typeof message === 'string' ? message : '(unknown)',
+    });
+  }
+
+  return out.length > 0 ? out : undefined;
+}
+
+function recordInsertionFailure(
+  req: { payload: { logger: { error: (...args: unknown[]) => void } } },
+  response: InsertionResponse,
+  error: unknown,
+  index: number,
+  item: InsertionRequestItem,
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const fieldErrors = extractPayloadFieldErrors(error);
+
+  req.payload.logger.error(
+    {
+      err: error,
+      item: {
+        type: item.type,
+        id: item.id,
+        targetLocale: item.targetLocale,
+        dataKeys: Object.keys(item.data ?? {}),
+      },
+      fieldErrors,
+    },
+    '[reversia] insertion failed',
+  );
+
+  const fieldSummary = fieldErrors
+    ? ` [${fieldErrors.map((e) => `${e.field}: ${e.message}`).join('; ')}]`
+    : '';
+
+  response.errors.push(
+    `Item ${index} (${item.type}${item.id ? ` ${item.id}` : ''} → ${item.targetLocale}): ${message}${fieldSummary}`,
+  );
 }

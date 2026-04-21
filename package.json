@@ -1,6 +1,26 @@
 {
-  "name": "payload-plugin-reversia",
+  "name": "@sequoialabs/payload-plugin-reversia",
   "version": "0.1.0",
+  "author": {
+    "name": "Jean Walrave",
+    "email": "contact@reversia.tech",
+    "url": "https://reversia.tech"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/SequoiaLabs/reversia-payloadcms-plugin#readme",
+  "keywords": [
+    "payload",
+    "payloadcms",
+    "plugin",
+    "reversia",
+    "i18n",
+    "translation",
+    "localization"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SequoiaLabs/reversia-payloadcms-plugin.git"
+  },
   "description": "PayloadCMS plugin for Reversia translation SaaS integration",
   "type": "module",
   "exports": {
@@ -17,10 +37,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch",
-    "test": "bun test",
+    "test": "rm -f dev/test.db && bun test",
     "lint": "biome check",
     "lint:fix": "biome check --write",
-    "format": "biome format --write"
+    "format": "biome format --write",
+    "prepublishOnly": "bun run test && bun run build"
   },
   "peerDependencies": {
     "payload": "^3.0.0"

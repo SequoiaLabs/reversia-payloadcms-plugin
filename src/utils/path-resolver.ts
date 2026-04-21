@@ -1,268 +1,222 @@
 /**
- * Structural path resolution for PayloadCMS fields.
+ * Structural traversal for "container" fields.
  *
- * A localized field may be reached through a chain of object keys, array
- * containers, or blocks arrays. This module expresses that chain as a list of
- * segments and walks document data to produce concrete indexed paths such as
- * `items.0.title` or `body.2.title` (for a blocks field at position 2).
+ * In the per-top-level-field model, every translatable resource entry is a
+ * single top-level field. Scalars ship as plain strings. Containers (groups,
+ * arrays, blocks, richText, json) ship as a JSON-stringified map of
+ *   { <jsonPointer>: <translatableString> }
+ * where each pointer addresses one atomic translatable leaf inside the
+ * container's value.
+ *
+ * `LeafSegment` describes how to navigate from a container's *value* down to
+ * one of its localized leaves. Unlike absolute paths from the document root,
+ * an `iterate` segment means "the current node is an array, iterate it" —
+ * because the container's value IS the array we're already inside.
  */
 
-export type PathSegment =
+export type LeafSegment =
   | { kind: 'key'; name: string }
-  | { kind: 'array'; name: string }
-  | { kind: 'block'; name: string; blockSlug: string };
+  | { kind: 'iterate' }
+  | { kind: 'iterateBlock'; blockSlug: string };
 
-export interface ResolvedValue {
-  indexedPath: string;
+export interface LeafLocation {
+  /** RFC 6901 JSON Pointer string from the container's value root. */
+  pointer: string;
+  /** Decoded pointer parts (object keys / numeric indices). */
+  pointerParts: string[];
+  /** Resolved value at that location. */
   value: unknown;
 }
 
-export function segmentsToTemplatePath(segments: readonly PathSegment[]): string {
-  const parts: string[] = [];
-
-  for (const seg of segments) {
-    if (seg.kind === 'block') {
-      parts.push(seg.name, seg.blockSlug);
-    } else {
-      parts.push(seg.name);
-    }
-  }
-
-  return parts.join('.');
-}
-
-export function resolveValues(doc: unknown, segments: readonly PathSegment[]): ResolvedValue[] {
-  const out: ResolvedValue[] = [];
-
-  walk(doc, segments, 0, [], out);
-
+export function resolveLeafLocations(
+  containerValue: unknown,
+  segments: readonly LeafSegment[],
+): LeafLocation[] {
+  const out: LeafLocation[] = [];
+  walk(containerValue, segments, 0, [], out);
   return out;
 }
 
 function walk(
   node: unknown,
-  segments: readonly PathSegment[],
+  segs: readonly LeafSegment[],
   i: number,
-  pathParts: string[],
-  out: ResolvedValue[],
+  parts: string[],
+  out: LeafLocation[],
 ): void {
-  if (i === segments.length) {
-    out.push({ indexedPath: pathParts.join('.'), value: node });
+  if (i === segs.length) {
+    out.push({ pointer: encodePointer(parts), pointerParts: parts.slice(), value: node });
     return;
   }
 
-  if (node === null || node === undefined || typeof node !== 'object') {
+  if (node === null || node === undefined) {
     return;
   }
 
-  const seg = segments[i];
+  const seg = segs[i];
 
   if (seg.kind === 'key') {
+    if (typeof node !== 'object' || Array.isArray(node)) {
+      return;
+    }
     const next = (node as Record<string, unknown>)[seg.name];
-
-    walk(next, segments, i + 1, [...pathParts, seg.name], out);
-
+    walk(next, segs, i + 1, [...parts, seg.name], out);
     return;
   }
 
-  const arr = (node as Record<string, unknown>)[seg.name];
-
-  if (!Array.isArray(arr)) {
+  if (seg.kind === 'iterate') {
+    if (!Array.isArray(node)) {
+      return;
+    }
+    for (let idx = 0; idx < node.length; idx++) {
+      walk(node[idx], segs, i + 1, [...parts, String(idx)], out);
+    }
     return;
   }
 
-  for (let idx = 0; idx < arr.length; idx++) {
-    const item = arr[idx];
-
-    if (seg.kind === 'block') {
+  if (seg.kind === 'iterateBlock') {
+    if (!Array.isArray(node)) {
+      return;
+    }
+    for (let idx = 0; idx < node.length; idx++) {
+      const item = node[idx];
       if (
-        !item ||
-        typeof item !== 'object' ||
-        (item as Record<string, unknown>).blockType !== seg.blockSlug
+        item &&
+        typeof item === 'object' &&
+        (item as Record<string, unknown>).blockType === seg.blockSlug
       ) {
-        continue;
+        walk(item, segs, i + 1, [...parts, String(idx)], out);
       }
     }
-
-    walk(item, segments, i + 1, [...pathParts, seg.name, String(idx)], out);
   }
 }
 
+export function encodePointer(parts: readonly string[]): string {
+  if (parts.length === 0) {
+    return '';
+  }
+
+  let out = '';
+
+  for (const p of parts) {
+    out += `/${encodePointerSegment(p)}`;
+  }
+
+  return out;
+}
+
+export function decodePointer(pointer: string): string[] {
+  if (pointer === '' || pointer === '/') {
+    return pointer === '/' ? [''] : [];
+  }
+
+  if (pointer[0] !== '/') {
+    throw new Error(`Invalid JSON Pointer: ${pointer}`);
+  }
+
+  return pointer.slice(1).split('/').map(decodePointerSegment);
+}
+
+function encodePointerSegment(seg: string): string {
+  return seg.replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+function decodePointerSegment(seg: string): string {
+  return seg.replace(/~1/g, '/').replace(/~0/g, '~');
+}
+
 /**
- * Writes a value at an indexed path into a Payload-shaped update tree.
- *
- * When the path crosses into an array/blocks container, the array is lazily
- * materialised using structural hints from the corresponding source document
- * (e.g. preserving `id` and `blockType`) so Payload can persist the update
- * without dropping sibling items.
+ * Concatenate a parent pointer with a child pointer (already encoded).
+ * `''` is the empty pointer (root). Either side may be empty.
  */
-export function setAtIndexedPath(
-  target: Record<string, unknown>,
-  sourceDoc: unknown,
-  indexedPath: string,
-  value: unknown,
-): void {
-  const parts = indexedPath.split('.');
-  let tNode: unknown = target;
-  let sNode: unknown = sourceDoc;
+export function joinPointers(parent: string, child: string): string {
+  if (parent === '') {
+    return child;
+  }
+
+  if (child === '') {
+    return parent;
+  }
+
+  return `${parent}${child}`;
+}
+
+/**
+ * Writes a string at the location addressed by `pointer` inside `target`.
+ * Creates intermediate objects/arrays when traversal hits null/undefined,
+ * preserving any pre-existing structure encountered along the way.
+ */
+export function writeAtPointer(target: unknown, pointer: string, value: string): unknown {
+  const parts = decodePointer(pointer);
+
+  if (parts.length === 0) {
+    return value;
+  }
+
+  let root: unknown = target;
+
+  if (root === null || root === undefined) {
+    root = /^\d+$/.test(parts[0]) ? [] : {};
+  }
+
+  let current: unknown = root;
 
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
     const nextKey = parts[i + 1];
     const nextIsIndex = /^\d+$/.test(nextKey);
 
-    if (Array.isArray(tNode)) {
-      const idx = Number(key);
-      const srcItem = Array.isArray(sNode) ? sNode[idx] : undefined;
-
-      if (tNode[idx] === undefined) {
-        tNode[idx] = nextIsIndex ? [] : seedContainerFromSource(srcItem);
-      }
-
-      sNode = srcItem;
-      tNode = tNode[idx];
-
-      continue;
-    }
-
-    if (tNode && typeof tNode === 'object') {
-      const obj = tNode as Record<string, unknown>;
-      const srcChild =
-        sNode && typeof sNode === 'object' ? (sNode as Record<string, unknown>)[key] : undefined;
-
-      if (obj[key] === undefined) {
-        if (nextIsIndex) {
-          obj[key] = seedArrayFromSource(srcChild);
-        } else {
-          obj[key] = seedContainerFromSource(srcChild);
-        }
-      }
-
-      sNode = srcChild;
-      tNode = obj[key];
-    }
-  }
-
-  const last = parts[parts.length - 1];
-
-  if (Array.isArray(tNode)) {
-    tNode[Number(last)] = value;
-    return;
-  }
-
-  if (tNode && typeof tNode === 'object') {
-    (tNode as Record<string, unknown>)[last] = value;
-  }
-}
-
-function seedContainerFromSource(source: unknown): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-
-  if (source && typeof source === 'object' && !Array.isArray(source)) {
-    const src = source as Record<string, unknown>;
-
-    if (typeof src.id === 'string' || typeof src.id === 'number') {
-      out.id = src.id;
-    }
-
-    if (typeof src.blockType === 'string') {
-      out.blockType = src.blockType;
-    }
-  }
-
-  return out;
-}
-
-/**
- * Reads the value at an indexed path (e.g. `items.0.title`) from an arbitrary
- * document, stepping through arrays by numeric index and objects by key.
- * Returns `undefined` for any missing segment.
- */
-export function getAtIndexedPath(doc: unknown, indexedPath: string): unknown {
-  const parts = indexedPath.split('.');
-  let current: unknown = doc;
-
-  for (const part of parts) {
-    if (current === null || current === undefined) {
-      return undefined;
-    }
-
     if (Array.isArray(current)) {
-      const idx = Number(part);
+      const idx = Number(key);
 
-      if (!Number.isInteger(idx) || idx < 0 || idx >= current.length) {
-        return undefined;
+      if (current[idx] === null || current[idx] === undefined) {
+        current[idx] = nextIsIndex ? [] : {};
       }
 
       current = current[idx];
       continue;
     }
 
-    if (typeof current !== 'object') {
-      return undefined;
-    }
+    if (current && typeof current === 'object') {
+      const obj = current as Record<string, unknown>;
 
-    current = (current as Record<string, unknown>)[part];
+      if (obj[key] === null || obj[key] === undefined) {
+        obj[key] = nextIsIndex ? [] : {};
+      }
+
+      current = obj[key];
+    }
   }
 
-  return current;
+  const last = parts[parts.length - 1];
+
+  if (Array.isArray(current)) {
+    current[Number(last)] = value;
+  } else if (current && typeof current === 'object') {
+    (current as Record<string, unknown>)[last] = value;
+  }
+
+  return root;
 }
 
 /**
- * Checks whether a dot-separated indexed path can be produced by walking the
- * given segments. Array/block segments expect a numeric index in the indexed
- * path immediately after the container name.
+ * Deep-clones the source-locale container value and overlays each translation
+ * at its addressed pointer. When `containerSource` is missing, builds a sparse
+ * tree from the pointers — best-effort fallback so the platform still receives
+ * translated values for any leaves Reversia did send.
  */
-export function indexedPathMatchesSegments(
-  indexedPath: string,
-  segments: readonly PathSegment[],
-): boolean {
-  const parts = indexedPath.split('.');
-  let p = 0;
+export function applyTranslationsToContainer(
+  containerSource: unknown,
+  translations: Record<string, string>,
+): unknown {
+  let root: unknown =
+    containerSource === undefined || containerSource === null
+      ? null
+      : structuredClone(containerSource);
 
-  for (const seg of segments) {
-    if (p >= parts.length) {
-      return false;
-    }
-
-    if (seg.kind === 'key') {
-      if (parts[p] !== seg.name) {
-        return false;
-      }
-
-      p++;
-
-      continue;
-    }
-
-    if (parts[p] !== seg.name) {
-      return false;
-    }
-
-    p++;
-
-    if (p >= parts.length) {
-      return false;
-    }
-
-    if (!/^\d+$/.test(parts[p])) {
-      return false;
-    }
-
-    p++;
+  for (const [pointer, value] of Object.entries(translations)) {
+    root = writeAtPointer(root, pointer, value);
   }
 
-  return p === parts.length;
-}
-
-function seedArrayFromSource(source: unknown): unknown[] {
-  if (!Array.isArray(source)) {
-    return [];
-  }
-
-  return source.map((item) =>
-    item && typeof item === 'object' && !Array.isArray(item)
-      ? seedContainerFromSource(item)
-      : undefined,
-  );
+  return root;
 }

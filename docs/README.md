@@ -1,6 +1,6 @@
 # Documentation
 
-Reference and guides for `payload-plugin-reversia`.
+Reference and guides for `@sequoialabs/payload-plugin-reversia`.
 
 - [Configuration](./configuration.md) — plugin options, environment, collection / global whitelists.
 - [Field annotations](./field-annotations.md) — the `custom.reversia` metadata: types, behaviors, labels.

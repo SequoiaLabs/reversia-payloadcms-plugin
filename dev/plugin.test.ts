@@ -504,8 +504,8 @@ describe('resources-insert', () => {
   });
 });
 
-describe('nested insertion diff', () => {
-  test('diff is computed for nested group paths (seo.metaTitle)', async () => {
+describe('container-keyed insertion (group with localized leaf)', () => {
+  test('writes JSON-pointer map back into the source-cloned container', async () => {
     const post = await payload.create({
       collection: 'posts',
       locale: 'en',
@@ -537,7 +537,11 @@ describe('nested insertion diff', () => {
           id: postId,
           sourceLocale: 'en',
           targetLocale: 'fr',
-          data: { 'seo.metaTitle': 'Nouveau Titre Meta' },
+          // New wire shape: data is keyed by top-level field name. Containers
+          // ship a JSON-pointer map of translated leaves.
+          data: {
+            seo: JSON.stringify({ '/metaTitle': 'Nouveau Titre Meta' }),
+          },
         },
       ],
     });
@@ -546,8 +550,9 @@ describe('nested insertion diff', () => {
 
     const result = await response.json();
     expect(result.errors).toEqual([]);
-    // Diff picks up the nested change rather than silently returning {}.
-    expect(result[0].diff).toEqual({ 'seo.metaTitle': 'Ancien Titre Meta' });
+    // Diff is keyed by top-level field name (matches Reversia's
+    // `translation.field` mapping).
+    expect(result[0].diff.seo).toBeDefined();
 
     const doc = await payload.findByID({ collection: 'posts', id: postId, locale: 'fr' });
     expect(((doc as Record<string, unknown>).seo as Record<string, unknown>).metaTitle).toBe(

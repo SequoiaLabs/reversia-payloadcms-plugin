@@ -4,7 +4,7 @@
 
 ```ts
 import { buildConfig } from 'payload';
-import { reversiaPlugin } from 'payload-plugin-reversia';
+import { reversiaPlugin } from '@sequoialabs/payload-plugin-reversia';
 
 export default buildConfig({
   plugins: [
@@ -38,14 +38,14 @@ REVERSIA_API_KEY=sk_live_xxxxxxxxxxxxxxxx
 
 Each request from the Reversia SaaS must include it:
 
-- Header: `X-API-Key: <key>`
-- or query param: `?apiKey=<key>` (for GETs, convenient for debugging)
+- Header: `X-API-Key: <key>` (preferred)
+- or query param: `?apiKey=<key>` (for GETs, convenient for debugging — but it ends up in access logs)
 
-Unauthenticated requests return `401`.
+Unauthenticated requests return `401`. Validation is constant-time (`crypto.timingSafeEqual`). The plugin refuses to start if `apiKey` is missing or empty — it will not silently run unauthenticated.
 
 ## What gets exposed
 
-A collection or global is exposed only when `findLocalizedFields` finds at least one field with `localized: true`. Nested fields inside `group`, `tabs`, `blocks`, and `array` are walked. Fields added via the plugin's hidden sync queue (`reversia-sync-pending`) are internal and never exposed.
+A collection or global is exposed only when `findLocalizedFields` finds at least one localized leaf. Each top-level field that contains any localized descendant produces one resource entry — scalars ship as primitives, containers (group / array / blocks / richText / json) ship as a JSON-pointer map of the localized atoms inside (see [Rich text & JSON fields](./rich-text.md)). Non-localized siblings, structural keys, and unrelated subfields are filtered out before reaching Reversia. The hidden sync queue (`reversia-sync-pending`) is internal and never exposed.
 
 ## Hooks
 

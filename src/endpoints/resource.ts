@@ -2,7 +2,6 @@ import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
 import type { LocalizedFieldInfo, ReversiaPluginConfig } from '../types.js';
 import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
 import { findLocalizedFields, serializeField } from '../utils/fields.js';
-import { resolveValues } from '../utils/path-resolver.js';
 import { resolveDefaultLocale } from '../utils/payload-helpers.js';
 
 function extract(doc: unknown, fields: LocalizedFieldInfo[]) {
@@ -10,14 +9,16 @@ function extract(doc: unknown, fields: LocalizedFieldInfo[]) {
   const contentTypes: Record<string, string> = {};
 
   for (const field of fields) {
-    const entries = serializeField(field, doc);
+    const entry = serializeField(field, doc);
 
-    for (const entry of entries) {
-      content[entry.indexedPath] = entry.value;
+    if (!entry) {
+      continue;
+    }
 
-      if (entry.contentType) {
-        contentTypes[entry.indexedPath] = entry.contentType;
-      }
+    content[entry.name] = entry.value;
+
+    if (entry.contentType) {
+      contentTypes[entry.name] = entry.contentType;
     }
   }
 
@@ -26,15 +27,14 @@ function extract(doc: unknown, fields: LocalizedFieldInfo[]) {
 
 function getLabelValue(doc: unknown, fields: LocalizedFieldInfo[]): string | undefined {
   const labelField = fields.find(
-    (f) => !f.hasArrayContainer && (f.name === 'title' || f.name === 'name'),
+    (f) => !f.isContainer && (f.name === 'title' || f.name === 'name'),
   );
 
   if (!labelField) {
     return undefined;
   }
 
-  const value = resolveValues(doc, labelField.segments)[0]?.value;
-
+  const value = (doc as Record<string, unknown> | null | undefined)?.[labelField.name];
   return typeof value === 'string' ? value : undefined;
 }
 

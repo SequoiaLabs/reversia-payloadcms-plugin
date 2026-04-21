@@ -1,5 +1,5 @@
 import type { CollectionSlug } from 'payload';
-import type { PathSegment } from './utils/path-resolver.js';
+import type { LeafSegment } from './utils/path-resolver.js';
 
 export interface ReversiaPluginConfig {
   /**
@@ -139,31 +139,51 @@ export interface ResourceDefinition {
   synchronizable: boolean;
 }
 
-export interface LocalizedFieldInfo {
-  name: string;
-  /**
-   * Human-readable template path. For fields inside array/blocks containers,
-   * this keeps container names (and block slugs) as segments so definitions
-   * stay readable (e.g. `body.hero.title`). Do NOT use this to index into
-   * document data — use `segments` + `resolveValues` for that.
-   */
-  path: string;
-  /**
-   * Structural chain of segments from the document root to the field. Key
-   * segments step into objects; array/block segments iterate into arrays
-   * (filtering by `blockType` for blocks).
-   */
-  segments: PathSegment[];
-  label: string;
-  type: string;
+/**
+ * Describes one localized leaf inside a top-level container field.
+ *
+ * `segments` walks from the container's *value* to the leaf (so a top-level
+ * scalar localized field has `segments: []` because the container value IS
+ * the scalar).
+ *
+ * `kind`:
+ *  - `scalar` — atomic string-shaped leaf (text, textarea, email, url, …)
+ *    serialized as-is at its pointer.
+ *  - `json` — structurally complex leaf (richText, json) that needs internal
+ *    extraction by `translatableKeys`. Each matching sub-leaf gets its own
+ *    pointer entry, prefixed by the leaf's own pointer in the container.
+ */
+export interface LocalizedLeaf {
+  segments: LeafSegment[];
+  kind: 'scalar' | 'json';
   payloadFieldType: string;
-  isNested: boolean;
-  /**
-   * True when at least one segment on the path is an array or blocks
-   * container. The serializer emits one entry per resolved item in that case.
-   */
-  hasArrayContainer: boolean;
   reversia?: ReversiaFieldCustom;
+}
+
+/**
+ * One translatable top-level field on a collection or global.
+ *
+ * The plugin emits exactly one resource-content entry per `LocalizedFieldInfo`,
+ * keyed by `name`. Scalars ship their value directly. Containers ship a
+ * JSON-stringified `{ <jsonPointer>: <translatableString> }` map whose keys
+ * address each atomic translatable leaf inside the container's value.
+ */
+export interface LocalizedFieldInfo {
+  /** Top-level field name — the key in the document and in the content map. */
+  name: string;
+  /** Resolved label for the resource configuration. */
+  label: string;
+  /** PayloadCMS field type at the top level (`text`, `richText`, `array`, …). */
+  payloadFieldType: string;
+  /**
+   * `true` when the value is shipped as a JSON pointer-map (containers).
+   * `false` when shipped as a plain primitive (top-level localized scalars).
+   */
+  isContainer: boolean;
+  /** `custom.reversia` declared on the top-level field, if any. */
+  reversia?: ReversiaFieldCustom;
+  /** One descriptor per localized leaf inside the container. */
+  leaves: LocalizedLeaf[];
 }
 
 export interface ResourceItem {
