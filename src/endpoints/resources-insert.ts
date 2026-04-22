@@ -7,6 +7,39 @@ import {
   findLocalizedFields,
 } from '../utils/fields.js';
 
+const WRITE_CONFLICT_MAX_RETRIES = 3;
+const WRITE_CONFLICT_BASE_DELAY_MS = 50;
+
+function isWriteConflict(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const message =
+    'message' in error && typeof (error as { message: unknown }).message === 'string'
+      ? (error as { message: string }).message
+      : '';
+
+  return message.includes('Write conflict') || message.includes('write conflict');
+}
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt < WRITE_CONFLICT_MAX_RETRIES && isWriteConflict(error)) {
+        const delay = WRITE_CONFLICT_BASE_DELAY_MS * 2 ** attempt + Math.random() * WRITE_CONFLICT_BASE_DELAY_MS;
+
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 interface InsertionRequestItem {
   type: string;
   id?: string;
@@ -69,15 +102,44 @@ function applyTranslations({
   // rejects.
   const cleanSource = sourceDoc ? deflatePopulatedRelationships(sourceDoc) : null;
 
-  // Build updateData ONLY from fields Reversia actually sent translations for.
-  // Never pre-clone containers that aren't being translated — writing them
-  // back would overwrite other locales' existing values with source-language
-  // content, because Payload's update replaces the entire localized slot.
+  // Build updateData from fields Reversia sent, plus any required fields that
+  // are empty in the target locale. Payload validates ALL required fields on
+  // every update (not just the ones in `data`), so an empty required field in
+  // the target locale would block the entire write. We seed those from source.
   const updateData: Record<string, unknown> = {};
   const diff: Record<string, string> = {};
   const acceptedFields: string[] = [];
   const previous = (previousDoc as Record<string, unknown> | null | undefined) ?? null;
   const source = (cleanSource as Record<string, unknown> | null | undefined) ?? null;
+  const dataKeys = new Set(Object.keys(data));
+
+  // Seed required fields that are empty in target and not being translated.
+  for (const field of allowedFields) {
+    if (!field.hasRequiredLeaf) {
+      continue;
+    }
+
+    if (dataKeys.has(field.name)) {
+      continue; // Reversia is sending it — will be handled below
+    }
+
+    const targetValue = previous ? previous[field.name] : undefined;
+
+    if (targetValue !== undefined && targetValue !== null) {
+      continue; // Target already has a value — don't overwrite
+    }
+
+    const sourceValue = source ? source[field.name] : undefined;
+
+    if (sourceValue === undefined || sourceValue === null) {
+      continue; // Source is also empty — nothing we can do
+    }
+
+    // Seed from source so Payload's required validation doesn't reject.
+    updateData[field.name] = field.isContainer
+      ? deflatePopulatedRelationships(structuredClone(sourceValue))
+      : sourceValue;
+  }
 
   for (const [fieldName, translatedValue] of Object.entries(data)) {
     const field = fieldByName.get(fieldName);
@@ -190,12 +252,14 @@ export function createResourcesInsertEndpoint(
               continue;
             }
 
-            await req.payload.updateGlobal({
-              slug: globalSlug,
-              locale: item.targetLocale,
-              data: updateData,
-              context: { reversiaInsertion: true },
-            });
+            await withRetry(() =>
+              req.payload.updateGlobal({
+                slug: globalSlug,
+                locale: item.targetLocale,
+                data: updateData,
+                context: { reversiaInsertion: true },
+              }),
+            );
 
             response[index] = { index, type: item.type, id: globalSlug, diff };
             continue;
@@ -219,6 +283,7 @@ export function createResourcesInsertEndpoint(
             continue;
           }
 
+          const itemId = item.id;
           const allowedFields = findLocalizedFields(collection.fields);
 
           const [sourceDoc, previousDoc] = await Promise.all([
@@ -250,15 +315,17 @@ export function createResourcesInsertEndpoint(
             continue;
           }
 
-          await req.payload.update({
-            collection: slug,
-            id: item.id,
-            locale: item.targetLocale,
-            data: updateData,
-            context: { reversiaInsertion: true },
-          });
+          await withRetry(() =>
+            req.payload.update({
+              collection: slug,
+              id: itemId,
+              locale: item.targetLocale,
+              data: updateData,
+              context: { reversiaInsertion: true },
+            }),
+          );
 
-          response[index] = { index, type: item.type, id: item.id, diff };
+          response[index] = { index, type: item.type, id: itemId, diff };
         } catch (error) {
           recordInsertionFailure(req, response, error, index, item);
         }

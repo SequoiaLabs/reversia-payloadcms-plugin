@@ -123,6 +123,10 @@ export interface TranslatableFieldConfig {
   behavior?: ReversiaFieldBehavior;
   type?: ReversiaFieldType;
   selected?: boolean;
+  rules?: {
+    maxLength?: number;
+    minLength?: number;
+  };
 }
 
 export interface ResourceDefinition {
@@ -184,6 +188,17 @@ export interface LocalizedFieldInfo {
   reversia?: ReversiaFieldCustom;
   /** One descriptor per localized leaf inside the container. */
   leaves: LocalizedLeaf[];
+  /** Payload `maxLength` on the field (text / textarea / code). */
+  maxLength?: number;
+  /** Payload `minLength` on the field (text / textarea / code). */
+  minLength?: number;
+  /**
+   * True when Payload marks this field (or any required inner leaf) as
+   * `required`. Used during insertion to seed empty target-locale slots from
+   * the source locale so Payload's whole-document validation doesn't reject
+   * the update.
+   */
+  hasRequiredLeaf?: boolean;
 }
 
 export interface ResourceItem {

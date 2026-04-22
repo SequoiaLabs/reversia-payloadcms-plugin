@@ -20,10 +20,6 @@ import {
   resolveLeafLocations,
 } from './path-resolver.js';
 
-/* -------------------------------------------------------------------------- */
-/*  Schema introspection                                                      */
-/* -------------------------------------------------------------------------- */
-
 function getFieldLabel(field: Field): string {
   if (!('name' in field)) {
     return '';
@@ -97,6 +93,16 @@ const SCALAR_PAYLOAD_TYPES = new Set([
 
 function isScalarPayloadType(type: string): boolean {
   return SCALAR_PAYLOAD_TYPES.has(type);
+}
+
+function getNumericProp(field: Field, prop: string): number | undefined {
+  const val = (field as Record<string, unknown>)[prop];
+  return typeof val === 'number' && Number.isFinite(val) ? val : undefined;
+}
+
+function getBoolProp(field: Field, prop: string): boolean | undefined {
+  const val = (field as Record<string, unknown>)[prop];
+  return typeof val === 'boolean' ? val : undefined;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -177,6 +183,10 @@ function describeTopLevelField(field: Field & { name: string }): LocalizedFieldI
   // Top-level scalar that is itself localized → non-container, value shipped
   // as a primitive.
   if (isLocalized(field) && isScalarPayloadType(payloadFieldType)) {
+    const maxLength = getNumericProp(field, 'maxLength');
+    const minLength = getNumericProp(field, 'minLength');
+    const required = getBoolProp(field, 'required');
+
     return {
       name,
       label,
@@ -191,6 +201,9 @@ function describeTopLevelField(field: Field & { name: string }): LocalizedFieldI
           reversia,
         },
       ],
+      ...(maxLength !== undefined && { maxLength }),
+      ...(minLength !== undefined && { minLength }),
+      ...(required && { hasRequiredLeaf: true }),
     };
   }
 
@@ -216,6 +229,7 @@ function describeTopLevelField(field: Field & { name: string }): LocalizedFieldI
           reversia,
         },
       ],
+      ...(getBoolProp(field, 'required') && { hasRequiredLeaf: true }),
     };
   }
 
@@ -246,6 +260,11 @@ function describeTopLevelField(field: Field & { name: string }): LocalizedFieldI
     isContainer: true,
     reversia,
     leaves: innerLeaves,
+    // Containers (arrays, blocks, groups) almost always have required inner
+    // subfields we can't cheaply enumerate. Marking hasRequiredLeaf ensures we
+    // always seed empty target-locale containers from source so Payload's
+    // whole-document required-field validation doesn't reject the update.
+    hasRequiredLeaf: true,
   };
 }
 
@@ -351,6 +370,36 @@ function resolveAsLabel(field: LocalizedFieldInfo, hasLabelAlready: boolean): bo
   return false;
 }
 
+function resolveRules(
+  field: LocalizedFieldInfo,
+): { maxLength?: number; minLength?: number } | undefined {
+  // Rules only make sense for non-container scalars — containers ship as JSON
+  // pointer maps where the concept of "max length" doesn't apply at the
+  // top-level entry.
+  if (field.isContainer) {
+    return undefined;
+  }
+
+  const maxLength = field.maxLength;
+  const minLength = field.minLength;
+
+  if (maxLength === undefined && minLength === undefined) {
+    return undefined;
+  }
+
+  const rules: { maxLength?: number; minLength?: number } = {};
+
+  if (maxLength !== undefined) {
+    rules.maxLength = maxLength;
+  }
+
+  if (minLength !== undefined) {
+    rules.minLength = minLength;
+  }
+
+  return rules;
+}
+
 function humanize(segment: string): string {
   const spaced = segment
     .replace(/[_-]+/g, ' ')
@@ -402,6 +451,12 @@ export function buildTranslatableConfiguration(
       fieldConfig.selected = false;
     }
 
+    const rules = resolveRules(field);
+
+    if (rules) {
+      fieldConfig.rules = rules;
+    }
+
     config[field.name] = fieldConfig;
   }
 
@@ -410,10 +465,6 @@ export function buildTranslatableConfiguration(
 
 // Back-compat re-export for callers that only need the content-type resolver.
 export const getContentType = resolveContentType;
-
-/* -------------------------------------------------------------------------- */
-/*  Serialization                                                             */
-/* -------------------------------------------------------------------------- */
 
 export interface SerialisedFieldEntry {
   /** Top-level field name; doubles as the key in `content` and `contentTypes`. */
@@ -561,10 +612,6 @@ function resolveTranslatableKeys(leaf: LocalizedLeaf): string[] | null {
 
   return null;
 }
-
-/* -------------------------------------------------------------------------- */
-/*  Deserialization                                                           */
-/* -------------------------------------------------------------------------- */
 
 /**
  * Reverses `serializeField` for one top-level field.
@@ -1091,7 +1138,9 @@ function isPopulatedDoc(val: unknown): boolean {
   if (!val || typeof val !== 'object' || Array.isArray(val)) {
     return false;
   }
+
   const obj = val as Record<string, unknown>;
+  
   return (
     typeof obj.id === 'string' &&
     ('createdAt' in obj || 'updatedAt' in obj || 'filename' in obj || 'mimeType' in obj)
