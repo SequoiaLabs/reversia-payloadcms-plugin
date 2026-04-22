@@ -390,9 +390,7 @@ describe('richText inside array — extract + deserialize round-trip', () => {
     // Scalar leaf: subject
     expect(map['/0/subject']).toBe('You received a message.');
     // RichText leaf: text inside message tree
-    expect(map['/0/message/root/children/0/children/0/text']).toBe(
-      'Your submission was received.',
-    );
+    expect(map['/0/message/root/children/0/children/0/text']).toBe('Your submission was received.');
     // Non-localized fields stay out of the map
     expect(Object.values(map)).not.toContain('user@example.com');
   });
@@ -438,13 +436,19 @@ describe('richText inside array — extract + deserialize round-trip', () => {
       {
         subject: 'Welcome',
         message: {
-          root: { type: 'root', children: [{ type: 'paragraph', children: [{ type: 'text', text: 'Hello' }] }] },
+          root: {
+            type: 'root',
+            children: [{ type: 'paragraph', children: [{ type: 'text', text: 'Hello' }] }],
+          },
         },
       },
       {
         subject: 'Goodbye',
         message: {
-          root: { type: 'root', children: [{ type: 'paragraph', children: [{ type: 'text', text: 'Bye' }] }] },
+          root: {
+            type: 'root',
+            children: [{ type: 'paragraph', children: [{ type: 'text', text: 'Bye' }] }],
+          },
         },
       },
     ];
@@ -472,6 +476,133 @@ describe('richText inside array — extract + deserialize round-trip', () => {
     expect(result[1].subject).toBe('Au revoir');
     expect(result[0].message.root.children[0].children[0].text).toBe('Bonjour');
     expect(result[1].message.root.children[0].children[0].text).toBe('Salut');
+  });
+});
+
+describe('applyTranslations — no cross-locale or source overwrite', () => {
+  // We can't import applyTranslations directly (it's in resources-insert, not
+  // fields). Instead we test the two building blocks that guarantee safety:
+  //  1. deserializeFieldValue only touches what the translation map says
+  //  2. cloneLocalizedContainersFromSource skips scalars
+
+  test('deserializeFieldValue does not mutate the source value', () => {
+    const fields: Field[] = [
+      {
+        name: 'chapters',
+        type: 'array',
+        fields: [
+          { name: 'title', type: 'text', localized: true },
+          { name: 'description', type: 'textarea', localized: true },
+          {
+            name: 'link',
+            type: 'relationship',
+            relationTo: 'pages',
+          },
+        ],
+      },
+    ];
+
+    const [field] = findLocalizedFields(fields);
+
+    const source = [
+      { title: 'Chapter EN', description: 'Desc EN', link: 'page-1' },
+      { title: 'Second EN', description: 'Desc2 EN', link: 'page-2' },
+    ];
+
+    const sourceCopy = JSON.parse(JSON.stringify(source));
+
+    // Translate only ONE leaf of ONE item — everything else must come from
+    // source clone, and the original source must be untouched.
+    const translated: Record<string, string> = {
+      '/0/title': 'Chapitre FR',
+    };
+
+    const result = deserializeFieldValue(field, source, translated) as typeof source;
+
+    // Translated leaf applied
+    expect(result[0].title).toBe('Chapitre FR');
+    // Non-translated localized leaf: source value (fallback)
+    expect(result[0].description).toBe('Desc EN');
+    // Non-localized relationship: preserved from source
+    expect(result[0].link).toBe('page-1');
+    // Untranslated second item: full source clone
+    expect(result[1]).toEqual({ title: 'Second EN', description: 'Desc2 EN', link: 'page-2' });
+    // Original source not mutated
+    expect(source).toEqual(sourceCopy);
+  });
+
+  test('updateData only contains fields Reversia sent — not all localized fields', () => {
+    // Simulates the applyTranslations flow: for a collection with title (scalar),
+    // slug (scalar), and chapters (container), if Reversia only sends title and
+    // chapters, updateData must NOT contain slug.
+
+    const fields: Field[] = [
+      { name: 'title', type: 'text', localized: true },
+      { name: 'slug', type: 'text', localized: true },
+      {
+        name: 'chapters',
+        type: 'array',
+        fields: [{ name: 'title', type: 'text', localized: true }],
+      },
+    ];
+
+    const allFields = findLocalizedFields(fields);
+    const fieldByName = new Map(allFields.map((f) => [f.name, f]));
+
+    // Reversia only sent title + chapters, NOT slug
+    const data: Record<string, unknown> = {
+      title: 'Titre FR',
+      chapters: JSON.stringify({ '/0/title': 'Chapitre FR' }),
+    };
+
+    const sourceDoc = {
+      title: 'Title EN',
+      slug: 'title-en',
+      chapters: [{ title: 'Chapter EN', link: 'page-1' }],
+    };
+
+    // Replicate the updateData construction from applyTranslations
+    const updateData: Record<string, unknown> = {};
+
+    for (const [fieldName, translatedValue] of Object.entries(data)) {
+      const field = fieldByName.get(fieldName);
+      if (!field) {
+        continue;
+      }
+      const sourceValue = sourceDoc[fieldName as keyof typeof sourceDoc];
+      updateData[fieldName] = deserializeFieldValue(field, sourceValue, translatedValue);
+    }
+
+    // title: translated scalar
+    expect(updateData.title).toBe('Titre FR');
+    // slug: NOT in data → NOT in updateData → target locale keeps existing value
+    expect(updateData.slug).toBeUndefined();
+    // chapters: container, source-cloned + overlay
+    const chapters = updateData.chapters as Array<{ title: string; link: string }>;
+    expect(chapters[0].title).toBe('Chapitre FR');
+    expect(chapters[0].link).toBe('page-1'); // non-localized sibling preserved
+  });
+
+  test('cloneLocalizedContainersFromSource never clones scalars', () => {
+    const fields: Field[] = [
+      { name: 'title', type: 'text', localized: true },
+      { name: 'slug', type: 'text', localized: true },
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [{ name: 'metaTitle', type: 'text', localized: true }],
+      },
+    ];
+
+    const localized = findLocalizedFields(fields);
+    const sourceDoc = { title: 'EN Title', slug: 'en-title', seo: { metaTitle: 'EN Meta' } };
+    const clone = cloneLocalizedContainersFromSource(sourceDoc, localized);
+
+    // Container cloned
+    expect(clone.seo).toEqual({ metaTitle: 'EN Meta' });
+    // Scalars NOT cloned — writing them would overwrite the target locale
+    expect(clone.title).toBeUndefined();
+    expect(clone.slug).toBeUndefined();
   });
 });
 
@@ -522,5 +653,120 @@ describe('buildTranslatableConfiguration', () => {
     const fields: Field[] = [{ name: 'meta_description', type: 'text', localized: true }];
     const config = buildTranslatableConfiguration(findLocalizedFields(fields));
     expect(config.meta_description.label).toBe('Meta Description');
+  });
+});
+
+describe('deflatePopulatedRelationships', () => {
+  // Import directly so we can unit-test the deflation in isolation.
+  const { deflatePopulatedRelationships } = require('../../src/utils/fields.js') as {
+    deflatePopulatedRelationships: (v: unknown) => unknown;
+  };
+
+  test('deflates a populated upload field nested in a document', () => {
+    const doc = {
+      heroImage: {
+        id: '69abc',
+        filename: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      },
+      title: 'Hello',
+    };
+    const result = deflatePopulatedRelationships(doc) as Record<string, unknown>;
+    expect(result.heroImage).toBe('69abc');
+    expect(result.title).toBe('Hello');
+  });
+
+  test('deflates a polymorphic relationship { relationTo, value: populated }', () => {
+    const doc = {
+      link: {
+        relationTo: 'pageC',
+        value: { id: '69abc', title: 'Page', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      },
+    };
+    const result = deflatePopulatedRelationships(doc) as Record<string, unknown>;
+    expect(result.link).toEqual({ relationTo: 'pageC', value: '69abc' });
+  });
+
+  test('leaves raw string ids untouched', () => {
+    const doc = {
+      media: '69abc',
+      link: { relationTo: 'pageC', value: '69abc' },
+    };
+    const result = deflatePopulatedRelationships(doc) as Record<string, unknown>;
+    expect(result.media).toBe('69abc');
+    expect(result.link).toEqual({ relationTo: 'pageC', value: '69abc' });
+  });
+
+  test('recurses into array items with required relationship fields', () => {
+    // Simulates the PageB `chapters` array: localized title + required polymorphic link
+    const chapters = [
+      {
+        id: 'ch1',
+        title: 'Chapter One',
+        link: {
+          relationTo: 'pageC',
+          value: {
+            id: 'pc1',
+            title: 'Linked Page',
+            slug: 'linked',
+            createdAt: '2026-01-01',
+            updatedAt: '2026-01-01',
+          },
+        },
+      },
+      {
+        id: 'ch2',
+        title: 'Chapter Two',
+        link: { relationTo: 'pageD', value: 'pd1' }, // already raw
+      },
+    ];
+
+    const result = deflatePopulatedRelationships(chapters) as typeof chapters;
+
+    // Populated link deflated to raw id
+    expect(result[0].link).toEqual({ relationTo: 'pageC', value: 'pc1' });
+    // Already-raw link untouched
+    expect(result[1].link).toEqual({ relationTo: 'pageD', value: 'pd1' });
+    // Non-relationship fields preserved
+    expect(result[0].title).toBe('Chapter One');
+    expect(result[0].id).toBe('ch1');
+  });
+
+  test('deflates inside Lexical block nodes', () => {
+    const blockNode = {
+      type: 'block',
+      fields: {
+        id: 'b1',
+        blockType: 'mediaBlock',
+        media: {
+          id: '69media',
+          filename: 'img.png',
+          mimeType: 'image/png',
+          createdAt: '2026-01-01',
+        },
+      },
+      children: [],
+    };
+
+    const result = deflatePopulatedRelationships(blockNode) as typeof blockNode;
+    expect(result.fields.media).toBe('69media');
+    expect(result.fields.id).toBe('b1');
+    expect(result.fields.blockType).toBe('mediaBlock');
+  });
+
+  test('handles hasMany populated array inside a polymorphic relationship', () => {
+    const input = {
+      relationTo: 'posts',
+      value: [
+        { id: 'p1', title: 'Post 1', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+        { id: 'p2', title: 'Post 2', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      ],
+    };
+    expect(deflatePopulatedRelationships(input)).toEqual({
+      relationTo: 'posts',
+      value: ['p1', 'p2'],
+    });
   });
 });

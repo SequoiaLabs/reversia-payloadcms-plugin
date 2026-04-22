@@ -1013,7 +1013,7 @@ export function deflatePopulatedRelationships(value: unknown): unknown {
 
   const obj = value as Record<string, unknown>;
 
-  // Lexical block node — deflate populated fields
+  // Lexical block node — deflate populated fields inside `fields`.
   if (obj.type === 'block' && obj.fields && typeof obj.fields === 'object') {
     const fields = obj.fields as Record<string, unknown>;
     const deflated: Record<string, unknown> = {};
@@ -1021,14 +1021,8 @@ export function deflatePopulatedRelationships(value: unknown): unknown {
     for (const [key, val] of Object.entries(fields)) {
       if (key === 'id' || key === 'blockType' || key === 'blockName') {
         deflated[key] = val;
-      } else if (Array.isArray(val)) {
-        deflated[key] = val.map((item) =>
-          isPopulatedDoc(item) ? (item as Record<string, unknown>).id : item,
-        );
-      } else if (isPopulatedDoc(val)) {
-        deflated[key] = (val as Record<string, unknown>).id;
       } else {
-        deflated[key] = val;
+        deflated[key] = deflateValue(val);
       }
     }
 
@@ -1041,22 +1035,56 @@ export function deflatePopulatedRelationships(value: unknown): unknown {
     };
   }
 
-  // Non-block node — recurse into children only (don't touch field values at
-  // other levels, they come from the DB via depth: 0 which handles them).
-  if (Array.isArray(obj.children)) {
+  // Any other object — recurse all keys, deflating populated docs wherever
+  // they appear. This catches relationship / upload fields inside Payload
+  // array items, group subfields, etc. — not just Lexical blocks.
+  const out: Record<string, unknown> = {};
+
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = deflateValue(v);
+  }
+
+  return out;
+}
+
+/**
+ * Deflate a single value: if it's a populated doc, return its id. If it's a
+ * polymorphic relationship `{ relationTo, value: <populated> }`, deflate the
+ * inner value. Otherwise recurse.
+ */
+function deflateValue(val: unknown): unknown {
+  if (val === null || val === undefined || typeof val !== 'object') {
+    return val;
+  }
+
+  if (Array.isArray(val)) {
+    return val.map(deflateValue);
+  }
+
+  // Direct populated doc → raw id  (e.g. upload field: { id, filename, ... })
+  if (isPopulatedDoc(val)) {
+    return (val as Record<string, unknown>).id;
+  }
+
+  // Polymorphic relationship: { relationTo: 'x', value: <populated> }
+  const obj = val as Record<string, unknown>;
+
+  if (typeof obj.relationTo === 'string' && 'value' in obj && isPopulatedDoc(obj.value)) {
+    return { relationTo: obj.relationTo, value: (obj.value as Record<string, unknown>).id };
+  }
+
+  // hasMany polymorphic: { relationTo: 'x', value: [<populated>, ...] }
+  if (typeof obj.relationTo === 'string' && Array.isArray(obj.value)) {
     return {
-      ...obj,
-      children: (obj.children as unknown[]).map(deflatePopulatedRelationships),
+      relationTo: obj.relationTo,
+      value: obj.value.map((item: unknown) =>
+        isPopulatedDoc(item) ? (item as Record<string, unknown>).id : item,
+      ),
     };
   }
 
-  // Plain object (group value, etc.) — recurse all keys in case there are
-  // nested Lexical trees or arrays.
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    out[k] = deflatePopulatedRelationships(v);
-  }
-  return out;
+  // Recurse into nested structure
+  return deflatePopulatedRelationships(val);
 }
 
 function isPopulatedDoc(val: unknown): boolean {
