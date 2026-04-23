@@ -1140,7 +1140,7 @@ function isPopulatedDoc(val: unknown): boolean {
   }
 
   const obj = val as Record<string, unknown>;
-  
+
   return (
     typeof obj.id === 'string' &&
     ('createdAt' in obj || 'updatedAt' in obj || 'filename' in obj || 'mimeType' in obj)

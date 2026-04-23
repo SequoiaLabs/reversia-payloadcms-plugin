@@ -29,10 +29,12 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
       return await fn();
     } catch (error) {
       if (attempt < WRITE_CONFLICT_MAX_RETRIES && isWriteConflict(error)) {
-        const delay = WRITE_CONFLICT_BASE_DELAY_MS * 2 ** attempt + Math.random() * WRITE_CONFLICT_BASE_DELAY_MS;
+        const delay =
+          WRITE_CONFLICT_BASE_DELAY_MS * 2 ** attempt +
+          Math.random() * WRITE_CONFLICT_BASE_DELAY_MS;
 
         await new Promise((resolve) => setTimeout(resolve, delay));
-        
+
         continue;
       }
       throw error;
@@ -113,7 +115,18 @@ function applyTranslations({
   const source = (cleanSource as Record<string, unknown> | null | undefined) ?? null;
   const dataKeys = new Set(Object.keys(data));
 
-  // Seed required fields that are empty in target and not being translated.
+  // Seed required fields not being translated so Payload's whole-document
+  // validation doesn't reject the update.
+  //
+  // Scalars: only seed when the target locale has no value at all (null /
+  // undefined / empty string). If the target already has something, leave it.
+  //
+  // Containers: always seed from source when not in `data`. The target might
+  // have a "structurally present but content-empty" value (e.g. Payload
+  // auto-creates 9 default block items from `defaultValue` but every block's
+  // required inner richText is null). A shallow null-check misses this; a
+  // deep check is impractical. Seeding overwrites with source-locale content,
+  // which is harmless — the translated version will arrive in a future batch.
   for (const field of allowedFields) {
     if (!field.hasRequiredLeaf) {
       continue;
@@ -123,22 +136,24 @@ function applyTranslations({
       continue; // Reversia is sending it — will be handled below
     }
 
-    const targetValue = previous ? previous[field.name] : undefined;
-
-    if (targetValue !== undefined && targetValue !== null) {
-      continue; // Target already has a value — don't overwrite
-    }
-
     const sourceValue = source ? source[field.name] : undefined;
 
     if (sourceValue === undefined || sourceValue === null) {
       continue; // Source is also empty — nothing we can do
     }
 
-    // Seed from source so Payload's required validation doesn't reject.
-    updateData[field.name] = field.isContainer
-      ? deflatePopulatedRelationships(structuredClone(sourceValue))
-      : sourceValue;
+    if (field.isContainer) {
+      // Always seed containers from source — inner required subfields may be
+      // empty even when the container itself is non-null in the target.
+      updateData[field.name] = deflatePopulatedRelationships(structuredClone(sourceValue));
+    } else {
+      // Scalars: only seed when truly empty in target.
+      const targetValue = previous ? previous[field.name] : undefined;
+
+      if (targetValue === undefined || targetValue === null || targetValue === '') {
+        updateData[field.name] = sourceValue;
+      }
+    }
   }
 
   for (const [fieldName, translatedValue] of Object.entries(data)) {

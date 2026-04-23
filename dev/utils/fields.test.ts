@@ -632,6 +632,165 @@ describe('cloneLocalizedContainersFromSource', () => {
   });
 });
 
+describe('required-field seeding — blocks with defaultValue and empty inner richText', () => {
+  // Reproduces the pageD scenario: `content` is a localized blocks field with
+  // minRows: 9 and defaultValue that auto-creates 9 block items. Each block
+  // has a required `content` richText. When Reversia only sends scalar fields
+  // (title, description), the plugin must seed `content` from source so
+  // Payload's whole-document required validation doesn't reject the update.
+
+  const fields: Field[] = [
+    { name: 'title', type: 'text', localized: true, required: true },
+    { name: 'description', type: 'textarea', localized: true },
+    {
+      name: 'content',
+      type: 'blocks',
+      localized: true,
+      blocks: [
+        {
+          slug: 'segment',
+          fields: [
+            { name: 'type', type: 'select', options: ['who', 'when', 'where'] },
+            { name: 'content', type: 'richText', localized: true, required: true },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const allFields = findLocalizedFields(fields);
+
+  test('containers are always marked hasRequiredLeaf', () => {
+    const contentField = allFields.find((f) => f.name === 'content');
+    expect(contentField?.hasRequiredLeaf).toBe(true);
+  });
+
+  test('required scalar is marked hasRequiredLeaf', () => {
+    const titleField = allFields.find((f) => f.name === 'title');
+    expect(titleField?.hasRequiredLeaf).toBe(true);
+  });
+
+  test('non-required scalar is NOT marked hasRequiredLeaf', () => {
+    const descField = allFields.find((f) => f.name === 'description');
+    expect(descField?.hasRequiredLeaf).toBeUndefined();
+  });
+
+  test('seeding fills container from source when target has empty-shell blocks', () => {
+    const fieldByName = new Map(allFields.map((f) => [f.name, f]));
+
+    // Source (sl locale): fully populated
+    const sourceDoc = {
+      title: 'Naslov SL',
+      description: 'Opis SL',
+      content: [
+        {
+          blockType: 'segment',
+          type: 'who',
+          content: { root: { type: 'root', children: [{ type: 'text', text: 'Kdo' }] } },
+        },
+        {
+          blockType: 'segment',
+          type: 'when',
+          content: { root: { type: 'root', children: [{ type: 'text', text: 'Kdaj' }] } },
+        },
+      ],
+    };
+
+    // Target (en locale): blocks auto-created by defaultValue but richText is null
+    const previousDoc = {
+      title: null,
+      description: null,
+      content: [
+        { blockType: 'segment', type: 'who', content: null },
+        { blockType: 'segment', type: 'when', content: null },
+      ],
+    };
+
+    // Reversia only sends scalars — NOT the blocks content
+    const data: Record<string, unknown> = {
+      title: 'Title EN',
+    };
+
+    const dataKeys = new Set(Object.keys(data));
+    const updateData: Record<string, unknown> = {};
+
+    // Replicate the seeding logic from applyTranslations
+    for (const field of allFields) {
+      if (!field.hasRequiredLeaf) {
+        continue;
+      }
+      if (dataKeys.has(field.name)) {
+        continue;
+      }
+      const sourceValue = sourceDoc[field.name as keyof typeof sourceDoc];
+      if (sourceValue === undefined || sourceValue === null) {
+        continue;
+      }
+      if (field.isContainer) {
+        updateData[field.name] = structuredClone(sourceValue);
+      } else {
+        const targetValue = previousDoc[field.name as keyof typeof previousDoc];
+        if (targetValue === undefined || targetValue === null || targetValue === '') {
+          updateData[field.name] = sourceValue;
+        }
+      }
+    }
+
+    // Then apply Reversia's data
+    for (const [fieldName, translatedValue] of Object.entries(data)) {
+      const field = fieldByName.get(fieldName);
+      if (!field) {
+        continue;
+      }
+      updateData[fieldName] = deserializeFieldValue(field, sourceDoc[fieldName as keyof typeof sourceDoc], translatedValue);
+    }
+
+    // title: translated value from Reversia
+    expect(updateData.title).toBe('Title EN');
+
+    // description: NOT required, NOT in data → NOT seeded → not in updateData
+    expect(updateData.description).toBeUndefined();
+
+    // content: required container, NOT in data, target has empty-shell blocks
+    // → seeded from source with fully populated richText
+    const seededContent = updateData.content as typeof sourceDoc.content;
+    expect(seededContent).toBeDefined();
+    expect(seededContent.length).toBe(2);
+    expect(seededContent[0].content?.root.children[0].text).toBe('Kdo');
+    expect(seededContent[1].content?.root.children[0].text).toBe('Kdaj');
+  });
+
+  test('seeding does NOT overwrite existing target scalar', () => {
+    // Target already has a translated title — seeding must not clobber it
+    const previousDoc = { title: 'Existing EN title', content: null };
+    const sourceDoc = { title: 'Naslov SL', content: null };
+    const data: Record<string, unknown> = {}; // Reversia sends nothing this batch
+    const dataKeys = new Set(Object.keys(data));
+    const updateData: Record<string, unknown> = {};
+
+    for (const field of allFields) {
+      if (!field.hasRequiredLeaf || dataKeys.has(field.name)) {
+        continue;
+      }
+      const sv = sourceDoc[field.name as keyof typeof sourceDoc];
+      if (sv === undefined || sv === null) {
+        continue;
+      }
+      if (field.isContainer) {
+        updateData[field.name] = structuredClone(sv);
+      } else {
+        const tv = previousDoc[field.name as keyof typeof previousDoc];
+        if (tv === undefined || tv === null || tv === '') {
+          updateData[field.name] = sv;
+        }
+      }
+    }
+
+    // title already exists in target → NOT overwritten
+    expect(updateData.title).toBeUndefined();
+  });
+});
+
 describe('buildTranslatableConfiguration', () => {
   test('keys configuration by top-level field name', () => {
     const fields: Field[] = [
