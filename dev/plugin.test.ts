@@ -796,6 +796,67 @@ describe('globals', () => {
   });
 });
 
+describe('locale fallback does not prevent seeding required fields', () => {
+  // Reproduces the bug: Payload's locale fallback makes previousDoc return
+  // the default-locale value for empty target-locale fields. Our seeding
+  // logic used to see a non-null value and skip, but the actual DB slot was
+  // empty — so Payload's required validation rejected the update.
+  //
+  // The fix: fetch previousDoc with `fallbackLocale: false`.
+
+  test('inserts into an empty target locale when fallback is enabled and required fields exist', async () => {
+    // Create a post in EN only (the default locale).
+    const post = await payload.create({
+      collection: 'posts',
+      locale: 'en',
+      data: { title: 'Fallback Test EN' },
+    });
+    const postId = String(post.id);
+
+    // FR locale has NOTHING — but with `fallback: true` in the config,
+    // reading at locale=fr returns the EN title as a fallback. If our
+    // previousDoc fetch doesn't disable fallback, seeding thinks FR already
+    // has a title and skips it → required validation fails.
+    const response = await callEndpoint<InsertionResponse>('put', '/reversia/resources-insert', {
+      headers: withKey(),
+      body: [
+        {
+          type: 'payloadcms:posts',
+          id: postId,
+          sourceLocale: 'en',
+          targetLocale: 'fr',
+          // Only send slug — NOT title. Title is required but not in this
+          // batch (it was "sent in another request" per the real-world case).
+          data: { slug: 'test-fallback-fr' },
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    const result = await response.json();
+
+    // The insertion must succeed — title was seeded from EN source because
+    // our previousDoc fetch uses fallbackLocale:false and sees FR title as
+    // null, triggering the seed.
+    expect(result.errors).toEqual([]);
+    expect(result[0]).toBeDefined();
+    expect(result[0].type).toBe('payloadcms:posts');
+
+    // Verify the FR locale actually has the seeded title.
+    const frDoc = await payload.findByID({
+      collection: 'posts',
+      id: postId,
+      locale: 'fr',
+      fallbackLocale: false as const,
+    });
+    // Title was seeded from EN source (not translated, but present so
+    // validation passes).
+    expect((frDoc as Record<string, unknown>).title).toBe('Fallback Test EN');
+    // Slug was the translated value from Reversia.
+    expect((frDoc as Record<string, unknown>).slug).toBe('test-fallback-fr');
+  });
+});
+
 describe('auth', () => {
   test('all GET endpoints reject without API key', async () => {
     const endpoints = [

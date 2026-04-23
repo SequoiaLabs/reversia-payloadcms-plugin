@@ -251,7 +251,12 @@ export function createResourcesInsertEndpoint(
             // rejects with "invalid relationships: [object Object]".
             const [sourceDoc, previousDoc] = await Promise.all([
               req.payload.findGlobal({ slug: globalSlug, locale: item.sourceLocale, depth: 0 }),
-              req.payload.findGlobal({ slug: globalSlug, locale: item.targetLocale, depth: 0 }),
+              req.payload.findGlobal({
+                slug: globalSlug,
+                locale: item.targetLocale,
+                depth: 0,
+                fallbackLocale: false as const,
+              }),
             ]);
 
             const { updateData, diff, acceptedFields } = applyTranslations({
@@ -314,6 +319,7 @@ export function createResourcesInsertEndpoint(
               id: item.id,
               locale: item.targetLocale,
               depth: 0,
+              fallbackLocale: false as const,
             }),
           ]);
 
