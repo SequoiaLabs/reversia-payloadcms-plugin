@@ -125,8 +125,9 @@ function applyTranslations({
   // have a "structurally present but content-empty" value (e.g. Payload
   // auto-creates 9 default block items from `defaultValue` but every block's
   // required inner richText is null). A shallow null-check misses this; a
-  // deep check is impractical. Seeding overwrites with source-locale content,
-  // which is harmless — the translated version will arrive in a future batch.
+  // deep check is impractical. Seeding writes source-locale content as a
+  // placeholder — once Reversia translates the field and sends it in `data`,
+  // the seed is overwritten with the real translation.
   for (const field of allowedFields) {
     if (!field.hasRequiredLeaf) {
       continue;
