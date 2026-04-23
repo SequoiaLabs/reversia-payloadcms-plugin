@@ -235,15 +235,27 @@ function describeTopLevelField(field: Field & { name: string }): LocalizedFieldI
 
   // Structured wrapper: group / array / blocks. Walk inside to collect
   // localized descendant leaves; emit a container only if any were found.
+  //
+  // When the top-level field itself is `localized: true`, ALL its inner
+  // translatable fields are inherently locale-specific (the whole container
+  // is stored per-locale). Payload may strip `localized: true` from inner
+  // fields in this case, so we pass `parentIsLocalized` to treat them as
+  // localized regardless.
+  const fieldIsLocalized = isLocalized(field);
   const innerLeaves: LocalizedLeaf[] = [];
 
   if (isGroupLikeField(field)) {
-    collectLeaves(field.fields, [], innerLeaves);
+    collectLeaves(field.fields, [], innerLeaves, fieldIsLocalized);
   } else if (isArrayField(field)) {
-    collectLeaves(field.fields, [{ kind: 'iterate' }], innerLeaves);
+    collectLeaves(field.fields, [{ kind: 'iterate' }], innerLeaves, fieldIsLocalized);
   } else if (isBlocksField(field)) {
     for (const block of field.blocks) {
-      collectLeaves(block.fields, [{ kind: 'iterateBlock', blockSlug: block.slug }], innerLeaves);
+      collectLeaves(
+        block.fields,
+        [{ kind: 'iterateBlock', blockSlug: block.slug }],
+        innerLeaves,
+        fieldIsLocalized,
+      );
     }
   } else {
     return null;
@@ -268,7 +280,12 @@ function describeTopLevelField(field: Field & { name: string }): LocalizedFieldI
   };
 }
 
-function collectLeaves(fields: Field[], parentSegments: LeafSegment[], out: LocalizedLeaf[]): void {
+function collectLeaves(
+  fields: Field[],
+  parentSegments: LeafSegment[],
+  out: LocalizedLeaf[],
+  parentIsLocalized = false,
+): void {
   for (const field of fields) {
     if (!isNamed(field)) {
       if (isTabsField(field)) {
@@ -277,7 +294,7 @@ function collectLeaves(fields: Field[], parentSegments: LeafSegment[], out: Loca
             'name' in tab && typeof tab.name === 'string' && tab.name.length > 0
               ? [...parentSegments, { kind: 'key', name: tab.name }]
               : parentSegments;
-          collectLeaves(tab.fields, tabSegments, out);
+          collectLeaves(tab.fields, tabSegments, out, parentIsLocalized);
         }
       }
 
@@ -286,7 +303,12 @@ function collectLeaves(fields: Field[], parentSegments: LeafSegment[], out: Loca
         'fields' in field &&
         Array.isArray((field as Record<string, unknown>).fields)
       ) {
-        collectLeaves((field as { fields: Field[] }).fields, parentSegments, out);
+        collectLeaves(
+          (field as { fields: Field[] }).fields,
+          parentSegments,
+          out,
+          parentIsLocalized,
+        );
       }
 
       continue;
@@ -296,6 +318,10 @@ function collectLeaves(fields: Field[], parentSegments: LeafSegment[], out: Loca
     const reversia = getReversiaCustom(field);
     const localized = isLocalized(field);
 
+    // Scalars (text, textarea, etc.) must be explicitly `localized: true` to
+    // be treated as translatable. Scalars inside a localized parent that
+    // aren't marked localized are structural (keys, enums) — translating
+    // "who" to "qui" would break app logic.
     if (localized && isScalarPayloadType(field.type)) {
       out.push({
         segments,
@@ -306,7 +332,13 @@ function collectLeaves(fields: Field[], parentSegments: LeafSegment[], out: Loca
       continue;
     }
 
-    if (localized && (field.type === 'richText' || field.type === 'json')) {
+    // RichText/json fields inherit localized status from their parent. Payload
+    // may strip `localized: true` from inner fields when the parent container
+    // is already localized (the whole container is per-locale, so inner
+    // localization is redundant). These are always translatable content.
+    const effectivelyLocalized = localized || parentIsLocalized;
+
+    if (effectivelyLocalized && (field.type === 'richText' || field.type === 'json')) {
       out.push({
         segments,
         kind: 'json',
@@ -317,21 +349,28 @@ function collectLeaves(fields: Field[], parentSegments: LeafSegment[], out: Loca
     }
 
     if (isGroupLikeField(field)) {
-      collectLeaves(field.fields, segments, out);
+      collectLeaves(field.fields, segments, out, parentIsLocalized);
       continue;
     }
 
     if (isArrayField(field)) {
-      collectLeaves(field.fields, [...segments, { kind: 'iterate' }], out);
+      collectLeaves(
+        field.fields,
+        [...segments, { kind: 'iterate' }],
+        out,
+        parentIsLocalized || isLocalized(field),
+      );
       continue;
     }
 
     if (isBlocksField(field)) {
+      const blocksLocalized = parentIsLocalized || isLocalized(field);
       for (const block of field.blocks) {
         collectLeaves(
           block.fields,
           [...segments, { kind: 'iterateBlock', blockSlug: block.slug }],
           out,
+          blocksLocalized,
         );
       }
     }
