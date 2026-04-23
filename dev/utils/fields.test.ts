@@ -742,7 +742,11 @@ describe('required-field seeding — blocks with defaultValue and empty inner ri
       if (!field) {
         continue;
       }
-      updateData[fieldName] = deserializeFieldValue(field, sourceDoc[fieldName as keyof typeof sourceDoc], translatedValue);
+      updateData[fieldName] = deserializeFieldValue(
+        field,
+        sourceDoc[fieldName as keyof typeof sourceDoc],
+        translatedValue,
+      );
     }
 
     // title: translated value from Reversia
@@ -913,6 +917,78 @@ describe('deflatePopulatedRelationships', () => {
     expect(result.fields.media).toBe('69media');
     expect(result.fields.id).toBe('b1');
     expect(result.fields.blockType).toBe('mediaBlock');
+  });
+
+  test('preserves Lexical upload node structure while deflating populated value', () => {
+    // This was the critical bug: deflateValue used to return { relationTo, value: id }
+    // which stripped type, children, version, format from the Lexical node,
+    // corrupting the richText tree.
+    const lexicalUploadNode = {
+      type: 'upload',
+      value: {
+        id: '69media',
+        filename: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        url: '/media/photo.jpg',
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      },
+      relationTo: 'media',
+      version: 3,
+      format: '',
+      children: [],
+    };
+
+    const tree = {
+      root: {
+        type: 'root',
+        children: [
+          { type: 'paragraph', children: [{ type: 'text', text: 'Hello' }] },
+          lexicalUploadNode,
+        ],
+      },
+    };
+
+    const result = deflatePopulatedRelationships(tree) as typeof tree;
+    const uploadNode = result.root.children[1] as Record<string, unknown>;
+
+    // value deflated to raw id
+    expect(uploadNode.value).toBe('69media');
+    // ALL other Lexical node properties preserved
+    expect(uploadNode.type).toBe('upload');
+    expect(uploadNode.relationTo).toBe('media');
+    expect(uploadNode.version).toBe(3);
+    expect(uploadNode.format).toBe('');
+    expect(uploadNode.children).toEqual([]);
+    // Text node untouched
+    expect((result.root.children[0] as Record<string, unknown>).children).toEqual([
+      { type: 'text', text: 'Hello' },
+    ]);
+  });
+
+  test('preserves Lexical relationship node structure', () => {
+    const lexicalRelNode = {
+      type: 'relationship',
+      value: {
+        id: 'page1',
+        title: 'Some Page',
+        slug: 'some-page',
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      },
+      relationTo: 'pages',
+      version: 2,
+      format: '',
+      children: [],
+    };
+
+    const result = deflatePopulatedRelationships(lexicalRelNode) as Record<string, unknown>;
+
+    expect(result.value).toBe('page1');
+    expect(result.type).toBe('relationship');
+    expect(result.relationTo).toBe('pages');
+    expect(result.version).toBe(2);
+    expect(result.children).toEqual([]);
   });
 
   test('handles hasMany populated array inside a polymorphic relationship', () => {

@@ -1095,9 +1095,13 @@ export function deflatePopulatedRelationships(value: unknown): unknown {
 }
 
 /**
- * Deflate a single value: if it's a populated doc, return its id. If it's a
- * polymorphic relationship `{ relationTo, value: <populated> }`, deflate the
- * inner value. Otherwise recurse.
+ * Deflate a single value: if it's a populated doc, return its id. If it's an
+ * object with a `relationTo` + populated `value` (polymorphic relationship OR
+ * Lexical upload/relationship node), deflate only the `value` property while
+ * preserving all other keys (`type`, `children`, `version`, `format`, …).
+ *
+ * Previous implementation returned `{ relationTo, value: id }` which stripped
+ * Lexical node metadata and corrupted richText trees.
  */
 function deflateValue(val: unknown): unknown {
   if (val === null || val === undefined || typeof val !== 'object') {
@@ -1108,30 +1112,52 @@ function deflateValue(val: unknown): unknown {
     return val.map(deflateValue);
   }
 
-  // Direct populated doc → raw id  (e.g. upload field: { id, filename, ... })
-  if (isPopulatedDoc(val)) {
-    return (val as Record<string, unknown>).id;
-  }
-
-  // Polymorphic relationship: { relationTo: 'x', value: <populated> }
   const obj = val as Record<string, unknown>;
 
-  if (typeof obj.relationTo === 'string' && 'value' in obj && isPopulatedDoc(obj.value)) {
-    return { relationTo: obj.relationTo, value: (obj.value as Record<string, unknown>).id };
+  // Direct populated doc → raw id (e.g. upload field stored as { id, filename, … })
+  // Only match when the object has NO other "structural" keys that indicate
+  // it's a Lexical node or rich object we shouldn't collapse.
+  if (isPopulatedDoc(obj) && !isStructuralNode(obj)) {
+    return obj.id;
   }
 
-  // hasMany polymorphic: { relationTo: 'x', value: [<populated>, ...] }
-  if (typeof obj.relationTo === 'string' && Array.isArray(obj.value)) {
-    return {
-      relationTo: obj.relationTo,
-      value: obj.value.map((item: unknown) =>
-        isPopulatedDoc(item) ? (item as Record<string, unknown>).id : item,
-      ),
-    };
+  // Object with `relationTo` + populated `value` — this matches both Payload
+  // polymorphic relationships AND Lexical upload/relationship nodes.
+  // Deflate only the `value` key; preserve everything else.
+  if (typeof obj.relationTo === 'string' && 'value' in obj) {
+    if (isPopulatedDoc(obj.value)) {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        out[k] = k === 'value' ? (obj.value as Record<string, unknown>).id : deflateValue(v);
+      }
+      return out;
+    }
+
+    if (Array.isArray(obj.value)) {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        out[k] =
+          k === 'value'
+            ? (v as unknown[]).map((item) =>
+                isPopulatedDoc(item) ? (item as Record<string, unknown>).id : item,
+              )
+            : deflateValue(v);
+      }
+      return out;
+    }
   }
 
   // Recurse into nested structure
   return deflatePopulatedRelationships(val);
+}
+
+/**
+ * A "structural node" is an object that carries its own semantics beyond being
+ * a populated relationship doc — e.g. a Lexical node with `type`, `children`,
+ * `version`. Collapsing it to just its `id` would destroy the tree.
+ */
+function isStructuralNode(obj: Record<string, unknown>): boolean {
+  return typeof obj.type === 'string' || 'children' in obj || 'version' in obj;
 }
 
 function isPopulatedDoc(val: unknown): boolean {
@@ -1141,8 +1167,9 @@ function isPopulatedDoc(val: unknown): boolean {
 
   const obj = val as Record<string, unknown>;
 
+  const hasId = typeof obj.id === 'string' || typeof obj.id === 'number';
+
   return (
-    typeof obj.id === 'string' &&
-    ('createdAt' in obj || 'updatedAt' in obj || 'filename' in obj || 'mimeType' in obj)
+    hasId && ('createdAt' in obj || 'updatedAt' in obj || 'filename' in obj || 'mimeType' in obj)
   );
 }
