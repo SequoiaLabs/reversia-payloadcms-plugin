@@ -857,6 +857,156 @@ describe('locale fallback does not prevent seeding required fields', () => {
   });
 });
 
+describe('globals streaming', () => {
+  // Regression: the /reversia/resources endpoint used to iterate collections
+  // only and silently drop every global's content. Reversia would see the
+  // resource-definition for a global but never receive its content bucket.
+  test('streams global content alongside collections', async () => {
+    await payload.updateGlobal({
+      slug: 'site-settings',
+      locale: 'en',
+      data: { siteTitle: 'Streamed Site', siteDescription: 'Streamed desc' },
+    });
+
+    const response = await callEndpoint<StreamResponse>('get', '/reversia/resources', {
+      headers: withKey(),
+      searchParams: { types: 'payloadcms:global:site-settings' },
+    });
+    expect(response.status).toBe(200);
+
+    const data = await response.json();
+    const bucket = expectDefined(
+      data.content.find((c) => c.type === 'payloadcms:global:site-settings'),
+    );
+    expect(bucket.data.length).toBe(1);
+    expect(bucket.data[0].id).toBe('site-settings');
+    expect(bucket.data[0].content.siteTitle).toBe('Streamed Site');
+    expect(bucket.data[0].content.siteDescription).toBe('Streamed desc');
+  });
+
+  // Regression: `array > row (unnamed) > localized text` is the footer-links
+  // shape. Traversal must walk into the row without adding a path segment and
+  // still emit the inner localized leaf as a container atom.
+  test('streams localized leaves nested inside array > row containers', async () => {
+    await payload.updateGlobal({
+      slug: 'footer-links',
+      locale: 'en',
+      data: {
+        links: [
+          { name: 'About', url: '/about' },
+          { name: 'Contact', url: '/contact' },
+        ],
+      },
+    });
+
+    const response = await callEndpoint<StreamResponse>('get', '/reversia/resources', {
+      headers: withKey(),
+      searchParams: { types: 'payloadcms:global:footer-links' },
+    });
+    expect(response.status).toBe(200);
+
+    const data = await response.json();
+    const bucket = expectDefined(
+      data.content.find((c) => c.type === 'payloadcms:global:footer-links'),
+    );
+    const links = bucket.data[0].content.links as string;
+    expect(typeof links).toBe('string');
+    const atoms = JSON.parse(links) as Record<string, string>;
+    // One pointer per localized leaf — `/0/name` and `/1/name`. `url` is not
+    // localized and must not appear.
+    expect(atoms['/0/name']).toBe('About');
+    expect(atoms['/1/name']).toBe('Contact');
+    expect(Object.keys(atoms).some((k) => k.endsWith('/url'))).toBe(false);
+  });
+});
+
+describe('unique-constraint collision handling', () => {
+  // Regression: Reversia may translate two docs' source titles to the same
+  // target string (common for proper nouns, short phrases, numeric suffixes).
+  // Before the fix, the second insert threw `ValidationError: title.en: Value
+  // must be unique` and the whole item failed. The fix pre-checks unique
+  // scalars and drops the colliding field from `updateData`, letting the
+  // insert succeed as a no-op on that field.
+  test('drops a colliding unique scalar instead of failing the whole item', async () => {
+    const docA = await payload.create({
+      collection: 'unique-docs',
+      locale: 'en',
+      data: { title: 'Source A' },
+    });
+    const docB = await payload.create({
+      collection: 'unique-docs',
+      locale: 'en',
+      data: { title: 'Source B' },
+    });
+
+    // First insert: FR translation for docA — should land normally.
+    const first = await callEndpoint<InsertionResponse>('put', '/reversia/resources-insert', {
+      headers: withKey(),
+      body: [
+        {
+          type: 'payloadcms:unique-docs',
+          id: String(docA.id),
+          sourceLocale: 'en',
+          targetLocale: 'fr',
+          data: { title: 'Collision' },
+        },
+      ],
+    });
+    expect(first.status).toBe(200);
+    const firstJson = await first.json();
+    expect(firstJson.errors).toEqual([]);
+
+    const frDocA = await payload.findByID({
+      collection: 'unique-docs',
+      id: docA.id,
+      locale: 'fr',
+      fallbackLocale: false as const,
+    });
+    expect((frDocA as Record<string, unknown>).title).toBe('Collision');
+
+    // Second insert: FR translation for docB with the SAME title as docA's FR
+    // slot. The unique pre-check should drop the title from updateData.
+    // Because `title` is the only translatable field on this collection, the
+    // endpoint records "all fields skipped" and moves on — it does NOT throw.
+    const second = await callEndpoint<InsertionResponse>('put', '/reversia/resources-insert', {
+      headers: withKey(),
+      body: [
+        {
+          type: 'payloadcms:unique-docs',
+          id: String(docB.id),
+          sourceLocale: 'en',
+          targetLocale: 'fr',
+          data: { title: 'Collision' },
+        },
+      ],
+    });
+    expect(second.status).toBe(200);
+    const secondJson = await second.json();
+    // The item must be reported as a non-fatal skip, not a raw ValidationError.
+    expect(secondJson.errors.length).toBe(1);
+    expect(secondJson.errors[0]).toContain('unique-constraint');
+    expect(secondJson.errors[0]).not.toContain('ValidationError');
+
+    // docB's FR title remained empty (no collision poisoned the slot).
+    const frDocB = await payload.findByID({
+      collection: 'unique-docs',
+      id: docB.id,
+      locale: 'fr',
+      fallbackLocale: false as const,
+    });
+    expect((frDocB as Record<string, unknown>).title).toBeFalsy();
+
+    // docA's FR title is untouched.
+    const frDocACheck = await payload.findByID({
+      collection: 'unique-docs',
+      id: docA.id,
+      locale: 'fr',
+      fallbackLocale: false as const,
+    });
+    expect((frDocACheck as Record<string, unknown>).title).toBe('Collision');
+  });
+});
+
 describe('auth', () => {
   test('all GET endpoints reject without API key', async () => {
     const endpoints = [

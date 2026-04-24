@@ -132,6 +132,25 @@ export default buildConfig({
         },
       ],
     },
+    {
+      slug: 'unique-docs',
+      labels: { singular: 'Unique Doc', plural: 'Unique Docs' },
+      access: {
+        read: () => true,
+        create: () => true,
+        update: () => true,
+        delete: () => true,
+      },
+      fields: [
+        {
+          name: 'title',
+          type: 'text',
+          required: true,
+          localized: true,
+          unique: true,
+        },
+      ],
+    },
   ],
 
   globals: [
@@ -157,6 +176,38 @@ export default buildConfig({
           name: 'analyticsId',
           type: 'text',
           // NOT localized
+        },
+      ],
+    },
+    {
+      slug: 'footer-links',
+      label: 'Footer Links',
+      access: {
+        read: () => true,
+        update: () => true,
+      },
+      fields: [
+        {
+          name: 'links',
+          type: 'array',
+          fields: [
+            {
+              type: 'row',
+              fields: [
+                {
+                  name: 'name',
+                  type: 'text',
+                  required: true,
+                  localized: true,
+                },
+                {
+                  name: 'url',
+                  type: 'text',
+                  required: true,
+                },
+              ],
+            },
+          ],
         },
       ],
     },

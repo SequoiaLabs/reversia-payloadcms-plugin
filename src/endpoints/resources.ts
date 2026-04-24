@@ -50,7 +50,7 @@ function getLabelValue(doc: unknown, fields: LocalizedFieldInfo[]): string | und
 export function createResourcesEndpoint(
   pluginConfig: ReversiaPluginConfig,
   collectionsMap: Map<string, CollectionConfig>,
-  _globalsMap: Map<string, GlobalConfig>,
+  globalsMap: Map<string, GlobalConfig>,
 ): Endpoint {
   return {
     path: '/reversia/resources',
@@ -141,6 +141,57 @@ export function createResourcesEndpoint(
         if (items.length > 0) {
           response.content.push({ type: resourceType, data: items });
         }
+      }
+
+      // Globals are singletons (one doc per slug, id = slug), emitted after
+      // collections so pagination via `cursor` resumes at the right slot.
+      // Each global counts as 1 toward `limit`. Cursor semantics mirror the
+      // collection loop: when we find the type the cursor points to, that
+      // slot has already been returned — advance past it and resume from
+      // the next iteration.
+      for (const [slug, global] of globalsMap) {
+        const resourceType = `payloadcms:global:${slug}`;
+
+        if (requestedTypes && !requestedTypes.includes(resourceType)) {
+          continue;
+        }
+
+        if (!startFromCursor) {
+          if (cursor && cursor.type === resourceType) {
+            startFromCursor = true;
+            continue;
+          }
+          continue;
+        }
+
+        if (totalFetched >= limit) {
+          break;
+        }
+
+        const localizedFields = findLocalizedFields(global.fields);
+
+        if (localizedFields.length === 0) {
+          continue;
+        }
+
+        const doc = await req.payload.findGlobal({ slug, locale: defaultLocale });
+        const { content, contentTypes } = extractContent(doc, localizedFields);
+
+        if (Object.keys(content).length === 0) {
+          continue;
+        }
+
+        const item: ResourceItem = {
+          id: slug,
+          label: getLabelValue(doc, localizedFields),
+          content,
+          contentTypes: Object.keys(contentTypes).length > 0 ? contentTypes : undefined,
+        };
+
+        response.content.push({ type: resourceType, data: [item] });
+        lastType = resourceType;
+        lastId = slug;
+        totalFetched++;
       }
 
       if (lastType && lastId && totalFetched >= limit) {

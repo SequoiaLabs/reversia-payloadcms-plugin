@@ -199,6 +199,15 @@ export interface LocalizedFieldInfo {
    * the update.
    */
   hasRequiredLeaf?: boolean;
+  /**
+   * True when a top-level localized scalar is `unique: true`. Used during
+   * insertion to pre-check for cross-document collisions in the target locale
+   * before writing — Reversia may translate two docs' source values to the
+   * same target string, and Payload's unique validator would reject the
+   * second write. Only meaningful for scalars; Payload doesn't support
+   * `unique` on containers.
+   */
+  unique?: boolean;
 }
 
 export interface ResourceItem {

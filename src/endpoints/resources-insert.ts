@@ -1,4 +1,4 @@
-import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
+import type { CollectionConfig, Endpoint, GlobalConfig, Payload } from 'payload';
 import type { InsertionResponse, LocalizedFieldInfo, ReversiaPluginConfig } from '../types.js';
 import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
 import {
@@ -187,6 +187,82 @@ function applyTranslations({
   return { updateData, diff, acceptedFields };
 }
 
+/**
+ * Payload's unique validator rejects an update when the new value already
+ * exists on another doc in the same locale. Reversia legitimately produces
+ * colliding translations (proper nouns, short phrases, numeric-suffix titles
+ * that don't change across locales), so without a pre-check the whole item
+ * fails with `ValidationError: <field>.<locale>: Value must be unique`.
+ *
+ * For every scalar field in `updateData` that the schema marks `unique: true`,
+ * query the target collection/locale for any OTHER doc with that value. When
+ * one exists, drop the field from the write so the rest of the update can go
+ * through. The source of truth stays on the first doc that claimed the value;
+ * the second doc's target-locale slot remains empty and can be edited
+ * manually later.
+ */
+async function dropUniqueCollisions(params: {
+  payload: Payload;
+  collection: string;
+  id: string | number;
+  locale: string;
+  fields: readonly LocalizedFieldInfo[];
+  updateData: Record<string, unknown>;
+  acceptedFields: string[];
+  diff: Record<string, string>;
+}): Promise<void> {
+  const { payload, collection, id, locale, fields, updateData, acceptedFields, diff } = params;
+
+  for (const field of fields) {
+    if (field.isContainer || !field.unique) {
+      continue;
+    }
+
+    if (!(field.name in updateData)) {
+      continue;
+    }
+
+    const value = updateData[field.name];
+
+    if (value === null || value === undefined || value === '') {
+      continue;
+    }
+
+    const existing = await payload.find({
+      collection: collection as Parameters<Payload['find']>[0]['collection'],
+      locale: locale as Parameters<Payload['find']>[0]['locale'],
+      depth: 0,
+      limit: 1,
+      pagination: false,
+      where: {
+        and: [{ [field.name]: { equals: value } }, { id: { not_equals: id } }],
+      },
+    });
+
+    if (existing.docs.length === 0) {
+      continue;
+    }
+
+    payload.logger.warn(
+      {
+        collection,
+        id,
+        targetLocale: locale,
+        field: field.name,
+        collidingDocId: existing.docs[0]?.id,
+      },
+      '[reversia] skipping field to avoid unique collision',
+    );
+
+    delete updateData[field.name];
+    const acceptedIdx = acceptedFields.indexOf(field.name);
+    if (acceptedIdx !== -1) {
+      acceptedFields.splice(acceptedIdx, 1);
+    }
+    delete diff[field.name];
+  }
+}
+
 export function createResourcesInsertEndpoint(
   pluginConfig: ReversiaPluginConfig,
   collectionsMap: Map<string, CollectionConfig>,
@@ -333,6 +409,24 @@ export function createResourcesInsertEndpoint(
           if (acceptedFields.length === 0) {
             response.errors.push(
               `Item ${index}: no recognised fields in data (keys: ${Object.keys(item.data).join(', ')})`,
+            );
+            continue;
+          }
+
+          await dropUniqueCollisions({
+            payload: req.payload,
+            collection: slug,
+            id: itemId,
+            locale: item.targetLocale,
+            fields: allowedFields,
+            updateData,
+            acceptedFields,
+            diff,
+          });
+
+          if (acceptedFields.length === 0 || Object.keys(updateData).length === 0) {
+            response.errors.push(
+              `Item ${index}: all translatable fields skipped due to unique-constraint collisions in ${item.targetLocale}`,
             );
             continue;
           }

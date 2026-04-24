@@ -186,6 +186,7 @@ function describeTopLevelField(field: Field & { name: string }): LocalizedFieldI
     const maxLength = getNumericProp(field, 'maxLength');
     const minLength = getNumericProp(field, 'minLength');
     const required = getBoolProp(field, 'required');
+    const unique = getBoolProp(field, 'unique');
 
     return {
       name,
@@ -204,6 +205,7 @@ function describeTopLevelField(field: Field & { name: string }): LocalizedFieldI
       ...(maxLength !== undefined && { maxLength }),
       ...(minLength !== undefined && { minLength }),
       ...(required && { hasRequiredLeaf: true }),
+      ...(unique && { unique: true }),
     };
   }
 
