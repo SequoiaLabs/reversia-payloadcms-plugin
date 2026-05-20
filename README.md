@@ -71,6 +71,7 @@ Then mark whichever fields are translatable. **You don't need to annotate contai
 - **[Field annotations](./docs/field-annotations.md)** — the `custom.reversia` metadata reference.
 - **[Rich text & JSON fields](./docs/rich-text.md)** — `translatableKeys`, path patterns, and the `extract`/`apply` escape hatch.
 - **[API reference](./docs/api-reference.md)** — HTTP endpoints consumed by the Reversia SaaS.
+- **[Triggering crawls](./docs/trigger-crawl.md)** — `triggerCrawl()` for server code and `useTriggerCrawl()` for admin UI.
 - **[Contributing](./CONTRIBUTING.md)** — local dev, linting, testing.
 
 ## Requirements

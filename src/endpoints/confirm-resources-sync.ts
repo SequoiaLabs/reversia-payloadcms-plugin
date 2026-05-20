@@ -1,7 +1,7 @@
 import type { Endpoint } from 'payload';
-import type { ReversiaPluginConfig } from '../types.js';
-import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
-import { decodeCursor } from '../utils/cursor.js';
+import type { ReversiaPluginConfig } from '../types';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth';
+import { decodeCursor } from '../utils/cursor';
 
 export function createConfirmResourcesSyncEndpoint(pluginConfig: ReversiaPluginConfig): Endpoint {
   return {

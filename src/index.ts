@@ -1,16 +1,19 @@
 import type { CollectionConfig, Config, GlobalConfig } from 'payload';
-import { reversiaSyncPendingCollection } from './collections/sync-pending.js';
-import { createConfirmResourcesSyncEndpoint } from './endpoints/confirm-resources-sync.js';
-import { createResourceEndpoint } from './endpoints/resource.js';
-import { createResourcesEndpoint } from './endpoints/resources.js';
-import { createResourcesDefinitionEndpoint } from './endpoints/resources-definition.js';
-import { createResourcesInsertEndpoint } from './endpoints/resources-insert.js';
-import { createResourcesSyncEndpoint } from './endpoints/resources-sync.js';
-import { createSettingsEndpoint } from './endpoints/settings.js';
-import { createAfterChangeHook } from './hooks/after-change.js';
-import type { ReversiaPluginConfig } from './types.js';
-import { findLocalizedFields } from './utils/fields.js';
+import { reversiaSyncPendingCollection } from './collections/sync-pending';
+import { createConfirmResourcesSyncEndpoint } from './endpoints/confirm-resources-sync';
+import { createResourceEndpoint } from './endpoints/resource';
+import { createResourcesEndpoint } from './endpoints/resources';
+import { createResourcesDefinitionEndpoint } from './endpoints/resources-definition';
+import { createResourcesInsertEndpoint } from './endpoints/resources-insert';
+import { createResourcesSyncEndpoint } from './endpoints/resources-sync';
+import { createSettingsEndpoint } from './endpoints/settings';
+import { createTriggerCrawlDashboardEndpoint } from './endpoints/trigger-crawl-dashboard';
+import { createAfterChangeHook } from './hooks/after-change';
+import type { ReversiaPluginConfig } from './types';
+import { findLocalizedFields } from './utils/fields';
 
+export type { TriggerCrawlOptions, TriggerCrawlResult } from './trigger-crawl';
+export { triggerCrawl } from './trigger-crawl';
 export type {
   ConfirmResourcesSyncResponse,
   InsertionRequest,
@@ -24,8 +27,8 @@ export type {
   SettingsResponse,
   StreamResponse,
   TranslatableFieldConfig,
-} from './types.js';
-export { ReversiaFieldBehavior, ReversiaFieldType } from './types.js';
+} from './types';
+export { ReversiaFieldBehavior, ReversiaFieldType } from './types';
 
 const APPLIED_MARKER = Symbol.for('payload-plugin-reversia.applied');
 
@@ -120,6 +123,7 @@ export const reversiaPlugin =
       createResourcesInsertEndpoint(pluginConfig, collectionsMap, globalsMap),
       createConfirmResourcesSyncEndpoint(pluginConfig),
       createSettingsEndpoint(pluginConfig),
+      createTriggerCrawlDashboardEndpoint(pluginConfig),
     ];
 
     return config;

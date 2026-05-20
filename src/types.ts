@@ -1,5 +1,5 @@
 import type { CollectionSlug } from 'payload';
-import type { LeafSegment } from './utils/path-resolver.js';
+import type { LeafSegment } from './utils/path-resolver';
 
 export interface ReversiaPluginConfig {
   /**
@@ -24,6 +24,13 @@ export interface ReversiaPluginConfig {
    * Whether the plugin is disabled. Defaults to false.
    */
   disabled?: boolean;
+
+  /**
+   * Override the Reversia API base URL used by `triggerCrawl` and the
+   * dashboard button. Defaults to `process.env.REVERSIA_API_URL` then the
+   * built-in production URL.
+   */
+  baseUrl?: string;
 }
 
 export enum ReversiaFieldType {

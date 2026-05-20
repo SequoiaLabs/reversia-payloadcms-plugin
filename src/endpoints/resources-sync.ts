@@ -1,8 +1,8 @@
 import type { CollectionConfig, Endpoint, Where } from 'payload';
-import type { ReversiaPluginConfig, StreamResponse } from '../types.js';
-import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
-import { decodeCursor, encodeCursor } from '../utils/cursor.js';
-import { parseLimit } from '../utils/payload-helpers.js';
+import type { ReversiaPluginConfig, StreamResponse } from '../types';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth';
+import { decodeCursor, encodeCursor } from '../utils/cursor';
+import { parseLimit } from '../utils/payload-helpers';
 
 export function createResourcesSyncEndpoint(
   pluginConfig: ReversiaPluginConfig,

@@ -4,21 +4,21 @@ import type {
   LocalizedLeaf,
   ReversiaFieldCustom,
   TranslatableFieldConfig,
-} from '../types.js';
-import { type ReversiaFieldBehavior, ReversiaFieldType } from '../types.js';
+} from '../types';
+import { type ReversiaFieldBehavior, ReversiaFieldType } from '../types';
 import {
   applyByKeys,
   compileKeyMatcher,
   DEFAULT_RICHTEXT_KEYS,
   extractByKeys,
-} from './json-extract.js';
-import { resolveStaticLabel } from './labels.js';
+} from './json-extract';
+import { resolveStaticLabel } from './labels';
 import {
   applyTranslationsToContainer,
   joinPointers,
   type LeafSegment,
   resolveLeafLocations,
-} from './path-resolver.js';
+} from './path-resolver';
 
 function getFieldLabel(field: Field): string {
   if (!('name' in field)) {

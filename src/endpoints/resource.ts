@@ -1,8 +1,8 @@
 import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
-import type { LocalizedFieldInfo, ReversiaPluginConfig } from '../types.js';
-import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
-import { findLocalizedFields, serializeField } from '../utils/fields.js';
-import { resolveDefaultLocale } from '../utils/payload-helpers.js';
+import type { LocalizedFieldInfo, ReversiaPluginConfig } from '../types';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth';
+import { findLocalizedFields, serializeField } from '../utils/fields';
+import { resolveDefaultLocale } from '../utils/payload-helpers';
 
 function extract(doc: unknown, fields: LocalizedFieldInfo[]) {
   const content: Record<string, unknown> = {};

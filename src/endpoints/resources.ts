@@ -4,11 +4,11 @@ import type {
   ResourceItem,
   ReversiaPluginConfig,
   StreamResponse,
-} from '../types.js';
-import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
-import { decodeCursor, encodeCursor } from '../utils/cursor.js';
-import { findLocalizedFields, serializeField } from '../utils/fields.js';
-import { parseLimit, resolveDefaultLocale } from '../utils/payload-helpers.js';
+} from '../types';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth';
+import { decodeCursor, encodeCursor } from '../utils/cursor';
+import { findLocalizedFields, serializeField } from '../utils/fields';
+import { parseLimit, resolveDefaultLocale } from '../utils/payload-helpers';
 
 function extractContent(
   doc: unknown,

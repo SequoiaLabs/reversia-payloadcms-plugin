@@ -1,4 +1,4 @@
-import type { Cursor } from '../types.js';
+import type { Cursor } from '../types';
 
 /**
  * Opaque cursor encoding. Uses JSON in base64url so the delimiter concern

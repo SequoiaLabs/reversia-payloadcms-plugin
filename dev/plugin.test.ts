@@ -985,6 +985,9 @@ describe('unique-constraint collision handling', () => {
     // The item must be reported as a non-fatal skip, not a raw ValidationError.
     expect(secondJson.errors.length).toBe(1);
     expect(secondJson.errors[0]).toContain('unique-constraint');
+    expect(secondJson.errors[0]).toContain('payloadcms:unique-docs');
+    expect(secondJson.errors[0]).toContain(String(docB.id));
+    expect(secondJson.errors[0]).toContain('[title]');
     expect(secondJson.errors[0]).not.toContain('ValidationError');
 
     // docB's FR title remained empty (no collision poisoned the slot).

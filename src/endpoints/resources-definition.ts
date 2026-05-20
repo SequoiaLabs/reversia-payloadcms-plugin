@@ -1,8 +1,8 @@
 import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
-import type { ResourceDefinition, ReversiaPluginConfig } from '../types.js';
-import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
-import { buildTranslatableConfiguration, findLocalizedFields } from '../utils/fields.js';
-import { resolveStaticLabel } from '../utils/labels.js';
+import type { ResourceDefinition, ReversiaPluginConfig } from '../types';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth';
+import { buildTranslatableConfiguration, findLocalizedFields } from '../utils/fields';
+import { resolveStaticLabel } from '../utils/labels';
 
 export function createResourcesDefinitionEndpoint(
   pluginConfig: ReversiaPluginConfig,

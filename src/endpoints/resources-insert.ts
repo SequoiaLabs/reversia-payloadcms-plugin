@@ -1,11 +1,11 @@
 import type { CollectionConfig, Endpoint, GlobalConfig, Payload } from 'payload';
-import type { InsertionResponse, LocalizedFieldInfo, ReversiaPluginConfig } from '../types.js';
-import { unauthorizedResponse, validateApiKey } from '../utils/auth.js';
+import type { InsertionResponse, LocalizedFieldInfo, ReversiaPluginConfig } from '../types';
+import { unauthorizedResponse, validateApiKey } from '../utils/auth';
 import {
   deflatePopulatedRelationships,
   deserializeFieldValue,
   findLocalizedFields,
-} from '../utils/fields.js';
+} from '../utils/fields';
 
 const WRITE_CONFLICT_MAX_RETRIES = 3;
 const WRITE_CONFLICT_BASE_DELAY_MS = 50;
@@ -165,7 +165,24 @@ function applyTranslations({
     }
 
     const sourceValue = source ? source[fieldName] : undefined;
-    const finalValue = deserializeFieldValue(field, sourceValue, translatedValue);
+    let finalValue: unknown;
+
+    try {
+      finalValue = deserializeFieldValue(field, sourceValue, translatedValue);
+    } catch (error) {
+      // Re-throw with the offending field name attached so the caller's
+      // logger can pinpoint which container's source-locale shape blew up
+      // (e.g. a richText with a missing `children` array, an array item
+      // without an `id`). Without this, the surface error is something like
+      // "Cannot set properties of undefined (setting '0')" with no clue
+      // which field caused it across a multi-field document.
+      const message = error instanceof Error ? error.message : String(error);
+      const wrapped = new Error(`field "${fieldName}" failed to deserialize: ${message}`);
+      if (error instanceof Error && error.stack) {
+        wrapped.stack = error.stack;
+      }
+      throw wrapped;
+    }
 
     updateData[fieldName] = finalValue;
     acceptedFields.push(fieldName);
@@ -210,8 +227,9 @@ async function dropUniqueCollisions(params: {
   updateData: Record<string, unknown>;
   acceptedFields: string[];
   diff: Record<string, string>;
-}): Promise<void> {
+}): Promise<string[]> {
   const { payload, collection, id, locale, fields, updateData, acceptedFields, diff } = params;
+  const dropped: string[] = [];
 
   for (const field of fields) {
     if (field.isContainer || !field.unique) {
@@ -249,6 +267,7 @@ async function dropUniqueCollisions(params: {
         id,
         targetLocale: locale,
         field: field.name,
+        value,
         collidingDocId: existing.docs[0]?.id,
       },
       '[reversia] skipping field to avoid unique collision',
@@ -260,7 +279,10 @@ async function dropUniqueCollisions(params: {
       acceptedFields.splice(acceptedIdx, 1);
     }
     delete diff[field.name];
+    dropped.push(field.name);
   }
+
+  return dropped;
 }
 
 export function createResourcesInsertEndpoint(
@@ -413,7 +435,7 @@ export function createResourcesInsertEndpoint(
             continue;
           }
 
-          await dropUniqueCollisions({
+          const droppedForUnique = await dropUniqueCollisions({
             payload: req.payload,
             collection: slug,
             id: itemId,
@@ -426,7 +448,7 @@ export function createResourcesInsertEndpoint(
 
           if (acceptedFields.length === 0 || Object.keys(updateData).length === 0) {
             response.errors.push(
-              `Item ${index}: all translatable fields skipped due to unique-constraint collisions in ${item.targetLocale}`,
+              `Item ${index} (${item.type} ${itemId} → ${item.targetLocale}): all translatable fields skipped due to unique-constraint collisions [${droppedForUnique.join(', ')}]`,
             );
             continue;
           }
