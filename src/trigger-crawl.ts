@@ -1,6 +1,6 @@
 import type { CollectionSlug, GlobalSlug } from 'payload';
 
-const DEFAULT_BASE_URL = 'https://staging.api.reversia.tech';
+const DEFAULT_BASE_URL = 'https://api.reversia.tech';
 const TYPE_NAMESPACE = 'payloadcms:';
 const TRIGGER_CRAWL_PATH = '/projects/trigger-crawl';
 

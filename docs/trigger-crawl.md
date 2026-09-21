@@ -18,7 +18,6 @@ await triggerCrawl({
   apiKey: process.env.REVERSIA_API_KEY!,
   types: ['articles', 'site-settings'], // optional
   noCache: true,                         // optional
-  baseUrl: 'https://api.reversia.tech',  // optional
 });
 ```
 
