@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { type Endpoint, getPayload, type Payload, type PayloadRequest } from 'payload';
+import { getPayload, type Payload } from 'payload';
 import {
   type ConfirmResourcesSyncResponse,
   type InsertionResponse,
@@ -11,86 +11,22 @@ import {
   type SettingsResponse,
   type StreamResponse,
 } from '../src/index.js';
-import config, { TEST_API_KEY } from './payload.config.js';
+import { type EndpointCallOptions, expectDefined, invokeEndpoint, withKey } from './helpers.js';
+import config from './payload.config.js';
 
 let payload: Payload;
 
 /**
- * Typed wrapper around a Payload custom endpoint invocation.
- *
- * The generic `T` is the body shape Reversia documents for the given endpoint
- * — use the interfaces exported from `src/index.ts` (`StreamResponse`,
- * `InsertionResponse`, etc.). `T` defaults to `ReversiaErrorResponse` for
- * endpoints where the test only asserts a 4xx status and never inspects the
- * body.
+ * Typed wrapper around a Payload custom endpoint invocation against the
+ * endpoints registered by the dev config. See `invokeEndpoint` in
+ * `./helpers.ts` for the generic contract.
  */
-async function callEndpoint<T = ReversiaErrorResponse>(
+function callEndpoint<T = ReversiaErrorResponse>(
   method: string,
   path: string,
-  options: {
-    headers?: Record<string, string>;
-    body?: unknown;
-    searchParams?: Record<string, string>;
-  } = {},
-): Promise<{ status: number; json(): Promise<T>; raw: Response }> {
-  const endpoint = payload.config.endpoints?.find(
-    (e: Endpoint) => e.path === path && e.method === method,
-  );
-
-  if (!endpoint) {
-    throw new Error(`Endpoint ${method.toUpperCase()} ${path} not found`);
-  }
-
-  const url = new URL(`http://localhost/api${path}`);
-
-  if (options.searchParams) {
-    for (const [key, value] of Object.entries(options.searchParams)) {
-      url.searchParams.set(key, value);
-    }
-  }
-
-  const headers = new Headers(options.headers ?? {});
-
-  if (options.body) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  const req = {
-    headers,
-    payload,
-    url: url.toString(),
-    searchParams: url.searchParams,
-    json: options.body ? async () => options.body : undefined,
-    data: options.body ?? undefined,
-  } as unknown as PayloadRequest;
-
-  const response = await endpoint.handler(req);
-
-  return {
-    status: response.status,
-    raw: response,
-    async json(): Promise<T> {
-      return (await response.json()) as T;
-    },
-  };
-}
-
-function withKey(extra: Record<string, string> = {}): Record<string, string> {
-  return { 'X-API-Key': TEST_API_KEY, ...extra };
-}
-
-/**
- * Narrow `T | null | undefined` → `T` with a jest-style assertion so the
- * remainder of the test can access fields without optional chaining noise.
- */
-function expectDefined<T>(
-  value: T | null | undefined,
-  message = 'expected value to be defined',
-): T {
-  if (value === null || value === undefined) {
-    throw new Error(message);
-  }
-  return value;
+  options: EndpointCallOptions = {},
+) {
+  return invokeEndpoint<T>(payload.config.endpoints ?? [], payload, method, path, options);
 }
 
 interface SyncPendingDoc {

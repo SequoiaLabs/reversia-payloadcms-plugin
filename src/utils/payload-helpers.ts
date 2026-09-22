@@ -1,4 +1,5 @@
-import type { PayloadRequest } from 'payload';
+import type { CollectionConfig, GlobalConfig, PayloadRequest } from 'payload';
+import type { EnabledResource, ReversiaPluginConfig } from '../types';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
@@ -37,6 +38,59 @@ export function resolveDefaultLocale(req: PayloadRequest): string {
   }
 
   return 'en';
+}
+
+/**
+ * True when a collection or global enables `versions.drafts`. Accepts both
+ * the raw config shape (`versions: { drafts: true }`) and Payload's sanitized
+ * one (`versions: { drafts: { autosave: false, … } }`).
+ */
+export function hasDraftsEnabled(entity: CollectionConfig | GlobalConfig): boolean {
+  const versions = entity.versions;
+
+  return Boolean(versions && typeof versions === 'object' && versions.drafts);
+}
+
+/**
+ * Slug of an `enabledCollections` / `enabledGlobals` entry, whichever form
+ * it was written in.
+ */
+export function resourceSlug(entry: EnabledResource): string {
+  return typeof entry === 'string' ? entry : entry.slug;
+}
+
+/**
+ * Resolves the configured `useDrafts` value for one resource: the
+ * per-resource override from its `enabledCollections` / `enabledGlobals`
+ * entry when present, otherwise the root `useDrafts` flag (default false).
+ */
+export function resolveUseDrafts(
+  pluginConfig: ReversiaPluginConfig,
+  kind: 'collection' | 'global',
+  slug: string,
+): boolean {
+  const entries =
+    kind === 'collection' ? pluginConfig.enabledCollections : pluginConfig.enabledGlobals;
+  const entry = entries?.find((e) => resourceSlug(e) === slug);
+
+  if (entry && typeof entry !== 'string' && typeof entry.useDrafts === 'boolean') {
+    return entry.useDrafts;
+  }
+
+  return pluginConfig.useDrafts === true;
+}
+
+/**
+ * Whether reads and writes for `entity` should target its draft rather than
+ * the published document: requires both `useDrafts` resolving to true for
+ * this resource and `versions.drafts` on the entity.
+ */
+export function shouldUseDrafts(
+  pluginConfig: ReversiaPluginConfig,
+  kind: 'collection' | 'global',
+  entity: CollectionConfig | GlobalConfig,
+): boolean {
+  return resolveUseDrafts(pluginConfig, kind, entity.slug) && hasDraftsEnabled(entity);
 }
 
 /**

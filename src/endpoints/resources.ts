@@ -8,7 +8,7 @@ import type {
 import { unauthorizedResponse, validateApiKey } from '../utils/auth';
 import { decodeCursor, encodeCursor } from '../utils/cursor';
 import { findLocalizedFields, serializeField } from '../utils/fields';
-import { parseLimit, resolveDefaultLocale } from '../utils/payload-helpers';
+import { parseLimit, resolveDefaultLocale, shouldUseDrafts } from '../utils/payload-helpers';
 
 function extractContent(
   doc: unknown,
@@ -105,12 +105,17 @@ export function createResourcesEndpoint(
           where.id = { greater_than: cursor.id };
         }
 
+        // With `draft: true` Payload queries the versions table and returns
+        // the latest version per document (draft or published). It rewrites
+        // `id` in `where`/`sort` to the version's `parent`, so the cursor keeps
+        // pointing at document ids.
         const docs = await req.payload.find({
           collection: slug,
           locale: defaultLocale,
           limit: limit - totalFetched,
           sort: 'id',
           where,
+          draft: shouldUseDrafts(pluginConfig, 'collection', collection),
         });
 
         if (docs.docs.length === 0) {
@@ -174,7 +179,11 @@ export function createResourcesEndpoint(
           continue;
         }
 
-        const doc = await req.payload.findGlobal({ slug, locale: defaultLocale });
+        const doc = await req.payload.findGlobal({
+          slug,
+          locale: defaultLocale,
+          draft: shouldUseDrafts(pluginConfig, 'global', global),
+        });
         const { content, contentTypes } = extractContent(doc, localizedFields);
 
         if (Object.keys(content).length === 0) {

@@ -1,6 +1,21 @@
 import type { CollectionSlug } from 'payload';
 import type { LeafSegment } from './utils/path-resolver';
 
+/**
+ * An entry of `enabledCollections` / `enabledGlobals`: either the bare slug,
+ * or an object carrying per-resource options.
+ */
+export interface EnabledResourceOptions<Slug extends string = string> {
+  slug: Slug;
+  /**
+   * Per-resource override of the root `useDrafts` flag. Only meaningful when
+   * the collection or global enables `versions.drafts`.
+   */
+  useDrafts?: boolean;
+}
+
+export type EnabledResource<Slug extends string = string> = EnabledResourceOptions<Slug> | Slug;
+
 export interface ReversiaPluginConfig {
   /**
    * API key used by Reversia SaaS to authenticate requests.
@@ -11,14 +26,20 @@ export interface ReversiaPluginConfig {
   /**
    * Optional: restrict which collections are exposed to Reversia.
    * If omitted, all collections with localized fields are exposed.
+   *
+   * Each entry is a slug, or `{ slug, useDrafts }` to override the root
+   * `useDrafts` flag for that collection.
    */
-  enabledCollections?: CollectionSlug[];
+  enabledCollections?: EnabledResource<CollectionSlug>[];
 
   /**
    * Optional: restrict which globals are exposed to Reversia.
    * If omitted, all globals with localized fields are exposed.
+   *
+   * Each entry is a slug, or `{ slug, useDrafts }` to override the root
+   * `useDrafts` flag for that global.
    */
-  enabledGlobals?: string[];
+  enabledGlobals?: EnabledResource[];
 
   /**
    * Whether the plugin is disabled. Defaults to false.
@@ -31,6 +52,28 @@ export interface ReversiaPluginConfig {
    * built-in production URL.
    */
   baseUrl?: string;
+
+  /**
+   * Make the plugin draft-aware for collections and globals that enable
+   * `versions.drafts`. Defaults to false. Can be overridden per resource via
+   * `{ slug, useDrafts }` entries in `enabledCollections` / `enabledGlobals`.
+   *
+   * When enabled, for those entities:
+   * - `GET /reversia/resources` and `GET /reversia/resource` return the latest
+   *   draft (falling back to the published document when no newer draft
+   *   exists), so Reversia translates what editors are currently working on.
+   * - `PUT /reversia/resources-insert` reads the source locale from the draft
+   *   and saves the translation as a new draft version. The published document
+   *   is never touched — publishing stays an editorial action in Payload.
+   *
+   * Entities without drafts are unaffected either way.
+   *
+   * When disabled (the default), every read and write targets the published
+   * document. Note that Payload bases a non-draft update on the latest
+   * version, so on a draft-enabled entity an insertion also publishes any
+   * pending source-locale draft — enable this flag if that is not desired.
+   */
+  useDrafts?: boolean;
 }
 
 export enum ReversiaFieldType {

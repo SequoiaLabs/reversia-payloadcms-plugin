@@ -86,6 +86,8 @@ Response:
 
 For container fields, the value is always a stringified JSON-pointer map. Pointers are anchored at the container's value root (`/metaTitle` for the `seo` group, `/0/heading` for the first item in the `body` blocks array, etc.). See [Rich text & JSON fields](./rich-text.md) for the extraction rules.
 
+Documents are read from the published state unless the plugin is configured with `useDrafts: true`, in which case entities with `versions.drafts` return their latest draft (see [Drafts](./configuration.md#drafts)).
+
 ## GET `/resource`
 
 Single-document variant.
@@ -127,7 +129,7 @@ For each item the plugin:
 4. Overlays each entry in `data`:
    - **Scalar** keys are written verbatim.
    - **Container** keys are deserialized: parse the JSON-pointer map, take the source-locale clone of that container, write each translated string at its pointer, store the rebuilt structure.
-5. Calls `payload.update(...)` (or `updateGlobal(...)`) with `context.reversiaInsertion = true` so the `afterChange` hook does not re-queue.
+5. Calls `payload.update(...)` (or `updateGlobal(...)`) with `context.reversiaInsertion = true` so the `afterChange` hook does not re-queue. With `useDrafts: true`, steps 2–5 target the draft of any entity that enables `versions.drafts` (`draft: true` on the reads and the write), so the published document is left untouched until an editor publishes (see [Drafts](./configuration.md#drafts)).
 
 Response:
 

@@ -11,11 +11,14 @@ import { createTriggerCrawlDashboardEndpoint } from './endpoints/trigger-crawl-d
 import { createAfterChangeHook } from './hooks/after-change';
 import type { ReversiaPluginConfig } from './types';
 import { findLocalizedFields } from './utils/fields';
+import { resourceSlug } from './utils/payload-helpers';
 
 export type { TriggerCrawlOptions, TriggerCrawlResult } from './trigger-crawl';
 export { triggerCrawl } from './trigger-crawl';
 export type {
   ConfirmResourcesSyncResponse,
+  EnabledResource,
+  EnabledResourceOptions,
   InsertionRequest,
   InsertionResponse,
   ResourceDefinition,
@@ -56,10 +59,10 @@ export const reversiaPlugin =
     marked[APPLIED_MARKER] = true;
 
     const enabledCollectionSlugs = pluginConfig.enabledCollections
-      ? new Set(pluginConfig.enabledCollections.map((s) => String(s)))
+      ? new Set(pluginConfig.enabledCollections.map(resourceSlug))
       : null;
     const enabledGlobalSlugs = pluginConfig.enabledGlobals
-      ? new Set(pluginConfig.enabledGlobals)
+      ? new Set(pluginConfig.enabledGlobals.map(resourceSlug))
       : null;
 
     const collectionsMap = new Map<string, CollectionConfig>();

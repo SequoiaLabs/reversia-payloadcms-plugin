@@ -151,6 +151,31 @@ export default buildConfig({
         },
       ],
     },
+    {
+      slug: 'articles',
+      labels: { singular: 'Article', plural: 'Articles' },
+      // Drafts enabled — exercised by dev/drafts.test.ts
+      versions: { drafts: true },
+      access: {
+        read: () => true,
+        create: () => true,
+        update: () => true,
+        delete: () => true,
+      },
+      fields: [
+        {
+          name: 'title',
+          type: 'text',
+          required: true,
+          localized: true,
+        },
+        {
+          name: 'summary',
+          type: 'textarea',
+          localized: true,
+        },
+      ],
+    },
   ],
 
   globals: [
@@ -208,6 +233,23 @@ export default buildConfig({
               ],
             },
           ],
+        },
+      ],
+    },
+    {
+      slug: 'announcement',
+      label: 'Announcement',
+      // Drafts enabled — exercised by dev/drafts.test.ts
+      versions: { drafts: true },
+      access: {
+        read: () => true,
+        update: () => true,
+      },
+      fields: [
+        {
+          name: 'headline',
+          type: 'text',
+          localized: true,
         },
       ],
     },

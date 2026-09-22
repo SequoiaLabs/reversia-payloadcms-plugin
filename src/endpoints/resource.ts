@@ -2,7 +2,7 @@ import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
 import type { LocalizedFieldInfo, ReversiaPluginConfig } from '../types';
 import { unauthorizedResponse, validateApiKey } from '../utils/auth';
 import { findLocalizedFields, serializeField } from '../utils/fields';
-import { resolveDefaultLocale } from '../utils/payload-helpers';
+import { resolveDefaultLocale, shouldUseDrafts } from '../utils/payload-helpers';
 
 function extract(doc: unknown, fields: LocalizedFieldInfo[]) {
   const content: Record<string, unknown> = {};
@@ -69,7 +69,11 @@ export function createResourceEndpoint(
         }
 
         const localizedFields = findLocalizedFields(globalConfig.fields);
-        const doc = await req.payload.findGlobal({ slug: globalSlug, locale: defaultLocale });
+        const doc = await req.payload.findGlobal({
+          slug: globalSlug,
+          locale: defaultLocale,
+          draft: shouldUseDrafts(pluginConfig, 'global', globalConfig),
+        });
         const { content, contentTypes } = extract(doc, localizedFields);
 
         return Response.json({
@@ -103,6 +107,7 @@ export function createResourceEndpoint(
         collection: slug,
         id: resourceId,
         locale: defaultLocale,
+        draft: shouldUseDrafts(pluginConfig, 'collection', collection),
       });
 
       const { content, contentTypes } = extract(doc, localizedFields);

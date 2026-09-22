@@ -6,6 +6,7 @@ import {
   deserializeFieldValue,
   findLocalizedFields,
 } from '../utils/fields';
+import { shouldUseDrafts } from '../utils/payload-helpers';
 
 const WRITE_CONFLICT_MAX_RETRIES = 3;
 const WRITE_CONFLICT_BASE_DELAY_MS = 50;
@@ -223,12 +224,14 @@ async function dropUniqueCollisions(params: {
   collection: string;
   id: string | number;
   locale: string;
+  draft: boolean;
   fields: readonly LocalizedFieldInfo[];
   updateData: Record<string, unknown>;
   acceptedFields: string[];
   diff: Record<string, string>;
 }): Promise<string[]> {
-  const { payload, collection, id, locale, fields, updateData, acceptedFields, diff } = params;
+  const { payload, collection, id, locale, draft, fields, updateData, acceptedFields, diff } =
+    params;
   const dropped: string[] = [];
 
   for (const field of fields) {
@@ -252,6 +255,7 @@ async function dropUniqueCollisions(params: {
       depth: 0,
       limit: 1,
       pagination: false,
+      draft,
       where: {
         and: [{ [field.name]: { equals: value } }, { id: { not_equals: id } }],
       },
@@ -342,17 +346,27 @@ export function createResourcesInsertEndpoint(
             }
 
             const allowedFields = findLocalizedFields(globalConfig.fields);
+            // When draft-aware, read the source and previous values from the
+            // latest draft and save the translation as a draft too, so nothing
+            // reaches the published global until an editor publishes it.
+            const draft = shouldUseDrafts(pluginConfig, 'global', globalConfig);
 
             // depth: 0 is critical — without it, Payload populates relationship
             // and upload fields as full objects instead of raw IDs. Our clone
             // would then write those objects back, which Payload's validator
             // rejects with "invalid relationships: [object Object]".
             const [sourceDoc, previousDoc] = await Promise.all([
-              req.payload.findGlobal({ slug: globalSlug, locale: item.sourceLocale, depth: 0 }),
+              req.payload.findGlobal({
+                slug: globalSlug,
+                locale: item.sourceLocale,
+                depth: 0,
+                draft,
+              }),
               req.payload.findGlobal({
                 slug: globalSlug,
                 locale: item.targetLocale,
                 depth: 0,
+                draft,
                 fallbackLocale: false as const,
               }),
             ]);
@@ -376,6 +390,7 @@ export function createResourcesInsertEndpoint(
                 slug: globalSlug,
                 locale: item.targetLocale,
                 data: updateData,
+                draft,
                 context: { reversiaInsertion: true },
               }),
             );
@@ -404,6 +419,8 @@ export function createResourcesInsertEndpoint(
 
           const itemId = item.id;
           const allowedFields = findLocalizedFields(collection.fields);
+          // See the global branch above: draft-aware reads + draft write.
+          const draft = shouldUseDrafts(pluginConfig, 'collection', collection);
 
           const [sourceDoc, previousDoc] = await Promise.all([
             req.payload.findByID({
@@ -411,12 +428,14 @@ export function createResourcesInsertEndpoint(
               id: item.id,
               locale: item.sourceLocale,
               depth: 0,
+              draft,
             }),
             req.payload.findByID({
               collection: slug,
               id: item.id,
               locale: item.targetLocale,
               depth: 0,
+              draft,
               fallbackLocale: false as const,
             }),
           ]);
@@ -440,6 +459,7 @@ export function createResourcesInsertEndpoint(
             collection: slug,
             id: itemId,
             locale: item.targetLocale,
+            draft,
             fields: allowedFields,
             updateData,
             acceptedFields,
@@ -459,6 +479,7 @@ export function createResourcesInsertEndpoint(
               id: itemId,
               locale: item.targetLocale,
               data: updateData,
+              draft,
               context: { reversiaInsertion: true },
             }),
           );
