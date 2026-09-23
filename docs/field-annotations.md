@@ -1,6 +1,6 @@
 # Field annotations
 
-Any PayloadCMS field can carry a `custom.reversia` block that tells the plugin how to treat it.
+Any PayloadCMS field can carry a `custom.reversia` block that tells the plugin how to treat it. The plugin augments Payload's `FieldCustom` type, so the block is type-checked: unknown keys and wrong value types fail to compile.
 
 ```ts
 import { ReversiaFieldType, ReversiaFieldBehavior } from '@sequoialabs/payload-plugin-reversia';

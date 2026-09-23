@@ -8,7 +8,13 @@ import type {
 import { unauthorizedResponse, validateApiKey } from '../utils/auth';
 import { decodeCursor, encodeCursor } from '../utils/cursor';
 import { findLocalizedFields, serializeField } from '../utils/fields';
-import { parseLimit, resolveDefaultLocale, shouldUseDrafts } from '../utils/payload-helpers';
+import {
+  buildItemProperties,
+  parseLimit,
+  resolveDefaultLocale,
+  resolveIsActive,
+  shouldUseDrafts,
+} from '../utils/payload-helpers';
 
 function extractContent(
   doc: unknown,
@@ -123,6 +129,7 @@ export function createResourcesEndpoint(
         }
 
         const items: ResourceItem[] = [];
+        const isActive = resolveIsActive(collection);
 
         for (const doc of docs.docs) {
           const { content, contentTypes } = extractContent(doc, localizedFields);
@@ -136,6 +143,12 @@ export function createResourcesEndpoint(
             label: getLabelValue(doc, localizedFields),
             content,
             contentTypes: Object.keys(contentTypes).length > 0 ? contentTypes : undefined,
+            properties: await buildItemProperties(isActive, {
+              doc,
+              req,
+              slug,
+              kind: 'collection',
+            }),
           });
 
           lastType = resourceType;
@@ -195,6 +208,12 @@ export function createResourcesEndpoint(
           label: getLabelValue(doc, localizedFields),
           content,
           contentTypes: Object.keys(contentTypes).length > 0 ? contentTypes : undefined,
+          properties: await buildItemProperties(resolveIsActive(global), {
+            doc,
+            req,
+            slug,
+            kind: 'global',
+          }),
         };
 
         response.content.push({ type: resourceType, data: [item] });

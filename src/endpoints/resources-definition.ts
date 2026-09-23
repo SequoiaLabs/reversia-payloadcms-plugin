@@ -3,6 +3,7 @@ import type { ResourceDefinition, ReversiaPluginConfig } from '../types';
 import { unauthorizedResponse, validateApiKey } from '../utils/auth';
 import { buildTranslatableConfiguration, findLocalizedFields } from '../utils/fields';
 import { resolveStaticLabel } from '../utils/labels';
+import { resolveIsActive } from '../utils/payload-helpers';
 
 export function createResourcesDefinitionEndpoint(
   pluginConfig: ReversiaPluginConfig,
@@ -40,6 +41,7 @@ export function createResourcesDefinitionEndpoint(
           configurationType: 'MULTIPLE',
           count: count.totalDocs,
           synchronizable: true,
+          ...(resolveIsActive(collection) && { deactivable: true }),
         });
       }
 
@@ -61,6 +63,7 @@ export function createResourcesDefinitionEndpoint(
           configuration: buildTranslatableConfiguration(localizedFields),
           configurationType: 'ENTITY',
           synchronizable: true,
+          ...(resolveIsActive(global) && { deactivable: true }),
         });
       }
 

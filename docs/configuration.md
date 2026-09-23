@@ -86,6 +86,48 @@ reversiaPlugin({
 
 Entities without `versions.drafts` behave exactly as before, whatever the flag. Draft saves still fire `afterChange`, so editors' draft edits land in the sync queue and Reversia re-translates them; insertions never enqueue anything.
 
+## Active / inactive documents
+
+A collection or global can declare which of its documents are "good for translation". Reversia then treats the resource as **deactivable**, the same way it treats disabled PrestaShop products or categories. Inactive documents are still crawled, but Reversia does not translate them unless the project enables "translate deactivated data" for that resource.
+
+Declare an `isActive` function under `custom.reversia` on the collection or global config:
+
+```ts
+export const Products: CollectionConfig = {
+  slug: 'products',
+  custom: {
+    reversia: {
+      isActive: ({ doc }) => doc._status === 'published' && !doc.archived,
+    },
+  },
+  fields: [/* … */],
+};
+```
+
+The function receives `{ doc, req, slug, kind }` and returns a boolean, or a promise of one. `doc` is the document as the plugin reads it: default locale, and the latest draft when [`useDrafts`](#drafts) applies. `kind` is `'collection'` or `'global'`.
+
+The plugin augments Payload's `CollectionCustom`, `GlobalCustom` and `FieldCustom` types, so `custom.reversia` is type-checked without any annotation. A misspelled key, a non-function `isActive` or a non-boolean return fails to compile. By default `doc` is a plain JSON object. Annotate the argument with your generated type to narrow it:
+
+```ts
+import type { ReversiaIsActiveArgs } from '@sequoialabs/payload-plugin-reversia';
+import type { Product } from '../payload-types';
+
+isActive: ({ doc }: ReversiaIsActiveArgs<Product>) => doc._status === 'published',
+```
+
+`isActive` must be a function. For configs that are not type-checked, the plugin also verifies this at startup and throws when it finds anything else.
+
+When a resource has an `isActive` function:
+
+- `GET /reversia/resources-definition` reports `deactivable: true` for it.
+- Every item from `GET /reversia/resources` and `GET /reversia/resource` carries `properties: { active: <result> }`.
+
+Resources without one are unchanged: no `deactivable` flag, no `properties`.
+
+There is nothing to configure on the plugin: it picks up `isActive` automatically from any exposed collection or global that declares it.
+
+If `isActive` throws, the request fails with a 500 instead of reporting the document as active. A document that silently turned active would be queued for translation. Changing the fields `isActive` reads fires the usual `afterChange` hook on collections, so Reversia re-reads the document and re-evaluates it on the next sync.
+
 ## Hooks
 
 The plugin installs an `afterChange` hook on every exposed collection to record changes in the sync queue. The hook is a no-op when the mutation came from Reversia itself (the insertion endpoint passes `context.reversiaInsertion = true`).

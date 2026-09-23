@@ -1,5 +1,10 @@
-import type { CollectionConfig, GlobalConfig, PayloadRequest } from 'payload';
-import type { EnabledResource, ReversiaPluginConfig } from '../types';
+import type { CollectionConfig, GlobalConfig, JsonObject, PayloadRequest } from 'payload';
+import type {
+  EnabledResource,
+  ResourceProperties,
+  ReversiaIsActive,
+  ReversiaPluginConfig,
+} from '../types';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
@@ -91,6 +96,69 @@ export function shouldUseDrafts(
   entity: CollectionConfig | GlobalConfig,
 ): boolean {
   return resolveUseDrafts(pluginConfig, kind, entity.slug) && hasDraftsEnabled(entity);
+}
+
+/**
+ * Returns the `isActive` method declared under `custom.reversia` on a
+ * collection or global config, or `undefined` when the resource is not
+ * deactivable. Throws when `isActive` is present but not a function, so a
+ * misconfigured resource fails loudly instead of silently losing the flag.
+ */
+export function resolveIsActive(
+  entity: CollectionConfig | GlobalConfig,
+): ReversiaIsActive | undefined {
+  const reversia: unknown = entity.custom?.reversia;
+
+  if (!reversia || typeof reversia !== 'object' || !('isActive' in reversia)) {
+    return undefined;
+  }
+
+  const { isActive } = reversia;
+
+  if (isActive === undefined) {
+    return undefined;
+  }
+
+  if (typeof isActive !== 'function') {
+    throw new Error(
+      `[reversia] custom.reversia.isActive on "${entity.slug}" must be a function, got ${typeof isActive}.`,
+    );
+  }
+
+  return isActive as ReversiaIsActive;
+}
+
+/**
+ * Builds the `properties` bag of one item. Returns `undefined` when the
+ * resource declares no `isActive`, so non-deactivable items stay unchanged.
+ */
+export async function buildItemProperties(
+  isActive: ReversiaIsActive | undefined,
+  args: {
+    doc: unknown;
+    req: PayloadRequest;
+    slug: string;
+    kind: 'collection' | 'global';
+  },
+): Promise<ResourceProperties | undefined> {
+  if (!isActive) {
+    return undefined;
+  }
+
+  const doc = (args.doc ?? {}) as JsonObject;
+
+  try {
+    const active = await isActive({ doc, req: args.req, slug: args.slug, kind: args.kind });
+    return { active: Boolean(active) };
+  } catch (error) {
+    const id = args.kind === 'global' ? args.slug : String(doc.id);
+    const detail = error instanceof Error ? error.message : String(error);
+    const wrapped = new Error(
+      `[reversia] isActive failed for ${args.kind} ${args.slug} (${id}): ${detail}`,
+    );
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    throw wrapped;
+  }
 }
 
 /**

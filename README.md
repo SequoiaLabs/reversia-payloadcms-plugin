@@ -67,7 +67,7 @@ Then mark whichever fields are translatable. **You don't need to annotate contai
 
 ## Documentation
 
-- **[Configuration](./docs/configuration.md)** — plugin options, auth, what gets exposed.
+- **[Configuration](./docs/configuration.md)** — plugin options, auth, what gets exposed, drafts, active/inactive documents.
 - **[Field annotations](./docs/field-annotations.md)** — the `custom.reversia` metadata reference.
 - **[Rich text & JSON fields](./docs/rich-text.md)** — `translatableKeys`, path patterns, and the `extract`/`apply` escape hatch.
 - **[API reference](./docs/api-reference.md)** — HTTP endpoints consumed by the Reversia SaaS.

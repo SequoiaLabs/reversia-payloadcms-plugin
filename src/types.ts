@@ -1,4 +1,4 @@
-import type { CollectionSlug } from 'payload';
+import type { CollectionSlug, JsonObject, PayloadRequest } from 'payload';
 import type { LeafSegment } from './utils/path-resolver';
 
 /**
@@ -12,6 +12,81 @@ export interface EnabledResourceOptions<Slug extends string = string> {
    * the collection or global enables `versions.drafts`.
    */
   useDrafts?: boolean;
+}
+
+/**
+ * Arguments handed to a resource's `isActive` method.
+ *
+ * `TDoc` defaults to Payload's `JsonObject`. Annotate the argument with your
+ * generated type to get a typed document:
+ * `isActive: ({ doc }: ReversiaIsActiveArgs<Product>) => doc._status === 'published'`.
+ */
+export interface ReversiaIsActiveArgs<TDoc extends JsonObject = JsonObject> {
+  /**
+   * The document as the plugin read it: default locale, and the latest draft
+   * when `useDrafts` applies to the resource. For a global, the global data.
+   */
+  doc: TDoc;
+  req: PayloadRequest;
+  /** Collection or global slug. */
+  slug: string;
+  kind: 'collection' | 'global';
+}
+
+/**
+ * Resource-level metadata for Reversia, declared under `custom.reversia` on a
+ * collection or global config. Payload's `CollectionCustom` and
+ * `GlobalCustom` are augmented below, so no annotation is needed:
+ *
+ * ```ts
+ * {
+ *   slug: 'products',
+ *   custom: {
+ *     reversia: {
+ *       isActive: ({ doc }) => doc._status === 'published',
+ *     },
+ *   },
+ *   fields: [...],
+ * }
+ * ```
+ */
+export interface ReversiaResourceCustom {
+  /**
+   * Decides, per document, whether it is "good for translation".
+   *
+   * Declaring it makes the resource *deactivable* in Reversia (the
+   * equivalent of PrestaShop's `DeactivableInterface`): the resource
+   * definition advertises `deactivable: true` and every item carries
+   * `properties.active` with the returned value. Reversia skips inactive
+   * items unless the project opts into translating deactivated content.
+   *
+   * Must be a function: the plugin throws at startup otherwise. An error
+   * thrown here fails the request rather than reporting the document as
+   * active.
+   *
+   * Declared with method syntax so an implementation can narrow `doc` to a
+   * generated collection type.
+   */
+  isActive?(args: ReversiaIsActiveArgs): boolean | Promise<boolean>;
+}
+
+/**
+ * Signature of {@link ReversiaResourceCustom.isActive}.
+ */
+export type ReversiaIsActive = NonNullable<ReversiaResourceCustom['isActive']>;
+
+declare module 'payload' {
+  interface CollectionCustom {
+    reversia?: ReversiaResourceCustom;
+  }
+
+  interface GlobalCustom {
+    reversia?: ReversiaResourceCustom;
+  }
+
+  interface FieldCustom {
+    reversia?: ReversiaFieldCustom;
+  }
 }
 
 export type EnabledResource<Slug extends string = string> = EnabledResourceOptions<Slug> | Slug;
@@ -191,6 +266,11 @@ export interface ResourceDefinition {
   configurationType: 'ENTITY' | 'MULTIPLE';
   count?: number;
   synchronizable: boolean;
+  /**
+   * Present and `true` when the resource declares an `isActive` function:
+   * its items then carry `properties.active`.
+   */
+  deactivable?: boolean;
 }
 
 /**
@@ -260,11 +340,23 @@ export interface LocalizedFieldInfo {
   unique?: boolean;
 }
 
+/**
+ * Per-item metadata bag shipped alongside the content.
+ */
+export interface ResourceProperties {
+  /**
+   * Result of the resource's `isActive` function. Omitted when the resource
+   * declares none. Reversia only excludes an item on an explicit `false`.
+   */
+  active?: boolean;
+}
+
 export interface ResourceItem {
   id: string;
   label?: string;
   content: Record<string, unknown>;
   contentTypes?: Record<string, string>;
+  properties?: ResourceProperties;
 }
 
 export interface StreamResponse {
@@ -306,6 +398,7 @@ export interface ResourceResponse {
   label?: string;
   content: Record<string, unknown>;
   contentTypes?: Record<string, string>;
+  properties?: ResourceProperties;
 }
 
 /**

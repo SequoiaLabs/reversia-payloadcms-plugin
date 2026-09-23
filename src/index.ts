@@ -11,7 +11,7 @@ import { createTriggerCrawlDashboardEndpoint } from './endpoints/trigger-crawl-d
 import { createAfterChangeHook } from './hooks/after-change';
 import type { ReversiaPluginConfig } from './types';
 import { findLocalizedFields } from './utils/fields';
-import { resourceSlug } from './utils/payload-helpers';
+import { resolveIsActive, resourceSlug } from './utils/payload-helpers';
 
 export type { TriggerCrawlOptions, TriggerCrawlResult } from './trigger-crawl';
 export { triggerCrawl } from './trigger-crawl';
@@ -23,10 +23,14 @@ export type {
   InsertionResponse,
   ResourceDefinition,
   ResourceItem,
+  ResourceProperties,
   ResourceResponse,
   ReversiaErrorResponse,
   ReversiaFieldCustom,
+  ReversiaIsActive,
+  ReversiaIsActiveArgs,
   ReversiaPluginConfig,
+  ReversiaResourceCustom,
   SettingsResponse,
   StreamResponse,
   TranslatableFieldConfig,
@@ -79,6 +83,7 @@ export const reversiaPlugin =
         continue;
       }
 
+      resolveIsActive(collection);
       collectionsMap.set(collection.slug, collection);
     }
 
@@ -93,6 +98,7 @@ export const reversiaPlugin =
         continue;
       }
 
+      resolveIsActive(global);
       globalsMap.set(global.slug, global);
     }
 

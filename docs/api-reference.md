@@ -30,6 +30,7 @@ Describes each exposed resource type: label, top-level field configuration, expe
     "configurationType": "MULTIPLE",
     "count": 42,
     "synchronizable": true,
+    "deactivable": true,
     "configuration": {
       "title":   { "label": "Title", "asLabel": true },
       "slug":    { "label": "Slug", "behavior": "slug" },
@@ -40,6 +41,8 @@ Describes each exposed resource type: label, top-level field configuration, expe
   }
 ]
 ```
+
+`deactivable` is present, and `true`, only for resources that declare an `isActive` function (see [Active / inactive documents](./configuration.md#active--inactive-documents)).
 
 `configuration` keys map 1:1 to the keys of `content` in `/resources` and the keys of `data` in `/resources-insert`. Container fields (any top-level field that has at least one localized descendant) report `type: "JSON"` even when the top-level field itself isn't `richText` / `json`.
 
@@ -75,7 +78,8 @@ Response:
             "content": "JSON",
             "seo": "JSON",
             "body": "JSON"
-          }
+          },
+          "properties": { "active": true }
         }
       ]
     }
@@ -85,6 +89,8 @@ Response:
 ```
 
 For container fields, the value is always a stringified JSON-pointer map. Pointers are anchored at the container's value root (`/metaTitle` for the `seo` group, `/0/heading` for the first item in the `body` blocks array, etc.). See [Rich text & JSON fields](./rich-text.md) for the extraction rules.
+
+`properties.active` is the result of the resource's `isActive` function. It is omitted, along with `properties`, when the resource declares none. Reversia only skips a document on an explicit `false`.
 
 Documents are read from the published state unless the plugin is configured with `useDrafts: true`, in which case entities with `versions.drafts` return their latest draft (see [Drafts](./configuration.md#drafts)).
 

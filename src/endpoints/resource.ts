@@ -2,7 +2,12 @@ import type { CollectionConfig, Endpoint, GlobalConfig } from 'payload';
 import type { LocalizedFieldInfo, ReversiaPluginConfig } from '../types';
 import { unauthorizedResponse, validateApiKey } from '../utils/auth';
 import { findLocalizedFields, serializeField } from '../utils/fields';
-import { resolveDefaultLocale, shouldUseDrafts } from '../utils/payload-helpers';
+import {
+  buildItemProperties,
+  resolveDefaultLocale,
+  resolveIsActive,
+  shouldUseDrafts,
+} from '../utils/payload-helpers';
 
 function extract(doc: unknown, fields: LocalizedFieldInfo[]) {
   const content: Record<string, unknown> = {};
@@ -80,6 +85,12 @@ export function createResourceEndpoint(
           id: globalSlug,
           content,
           contentTypes: Object.keys(contentTypes).length > 0 ? contentTypes : undefined,
+          properties: await buildItemProperties(resolveIsActive(globalConfig), {
+            doc,
+            req,
+            slug: globalSlug,
+            kind: 'global',
+          }),
         });
       }
 
@@ -117,6 +128,12 @@ export function createResourceEndpoint(
         label: getLabelValue(doc, localizedFields),
         content,
         contentTypes: Object.keys(contentTypes).length > 0 ? contentTypes : undefined,
+        properties: await buildItemProperties(resolveIsActive(collection), {
+          doc,
+          req,
+          slug,
+          kind: 'collection',
+        }),
       });
     },
   };
